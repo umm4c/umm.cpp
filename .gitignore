@@ -3,6 +3,7 @@
 /CMakeFiles/
 /.cache/
 /outputs/
+/benchmark-results/
 /review/
 /docs/
 /tests/
