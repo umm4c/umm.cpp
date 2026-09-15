@@ -19,7 +19,8 @@ public:
     virtual std::vector<float> encode(const image_input & image) = 0;
 };
 
-std::unique_ptr<sd_cpp_adapter> create_sd_cpp_adapter(model_family family, const std::string & path);
+std::unique_ptr<sd_cpp_adapter> create_sd_cpp_adapter(model_family family, const std::string & path,
+                                                       const std::string & backend = "");
 
 // Convert an input image to the dimensions/layout expected by a model's
 // editing or understanding path.
