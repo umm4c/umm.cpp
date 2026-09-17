@@ -32,7 +32,7 @@ constexpr model_descriptor descriptors[] = {
      16384, 8192, 32, 2048, 2048, 0, 0, u1_components, 2},
     // BAGEL keeps its vision projector and VAE as separate package components.
     {model_family::bagel, "bagel", all_capabilities,
-     16384, 8192, 16, 1024, 1024, 1024, 1024, bagel_components, 4},
+     8192, 512, 16, 1024, 1024, 1024, 1024, bagel_components, 4},
 };
 
 const model_descriptor * find_descriptor(std::string_view architecture) {

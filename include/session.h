@@ -23,6 +23,9 @@ struct image_options {
     float image_guidance = 1.5f;
     float flow_shift = 3.0f;
     int64_t seed = 42;
+    bool vae_tiling = false;
+    int vae_tile_size = 0;  // Latent-space pixels; zero selects sd.cpp's default.
+    float vae_tile_overlap = 0.5f;
     bool think = false;
     int max_think_tokens = 1024;
 };

@@ -28,6 +28,7 @@ void print_help() {
            "        [--generation-backend CANN0] [--generation-max-vram CANN0=40]\n"
            "        [--width MODEL_DEFAULT] [--height MODEL_DEFAULT] [--steps 50]\n"
            "        [--cfg 4] [--image-cfg 1.5] [--shift 3] [--seed 42]\n"
+           "        [--vae-tiling 0|1] [--vae-tile-size 64] [--vae-tile-overlap 0.5]\n"
            "        (interleave defaults: 512x512, cfg 1)\n";
 }
 
@@ -48,6 +49,7 @@ option_map parse_arguments(int argc, char ** argv) {
     const std::vector<std::string> known = {
         "--model", "--mode", "--prompt", "--input", "--output", "--max-tokens", "--max-images",
         "--width", "--height", "--steps", "--cfg", "--image-cfg", "--shift", "--seed",
+        "--vae-tiling", "--vae-tile-size", "--vae-tile-overlap",
         "--understanding-backend", "--vision-backend", "--generation-backend", "--generation-max-vram",
     };
     for (const auto & entry : args) {
@@ -87,6 +89,9 @@ void write_metadata(const std::filesystem::path & output,
         {"image_guidance", options.image_guidance},
         {"flow_shift", options.flow_shift},
         {"seed", options.seed},
+        {"vae_tiling", options.vae_tiling},
+        {"vae_tile_size", options.vae_tile_size},
+        {"vae_tile_overlap", options.vae_tile_overlap},
         {"reasoning", image.reasoning},
         {"reasoning_tokens", image.reasoning_tokens},
         {"prefix_tokens", image.prefix_tokens},
@@ -148,6 +153,9 @@ int run(int argc, char ** argv) {
         options.image_guidance = std::stof(value(args, "--image-cfg", "1.5"));
         options.flow_shift = std::stof(value(args, "--shift", "3"));
         options.seed = std::stoll(value(args, "--seed", "42"));
+        options.vae_tiling = std::stoi(value(args, "--vae-tiling", "0")) != 0;
+        options.vae_tile_size = std::stoi(value(args, "--vae-tile-size", "0"));
+        options.vae_tile_overlap = std::stof(value(args, "--vae-tile-overlap", "0.5"));
         options.think = mode == "think-edit";
         options.max_think_tokens = std::stoi(value(args, "--max-tokens", "1024"));
         const auto image = session.edit(input, prompt, options);
@@ -166,6 +174,9 @@ int run(int argc, char ** argv) {
     options.image_guidance = std::stof(value(args, "--image-cfg", "1.5"));
     options.flow_shift = std::stof(value(args, "--shift", "3"));
     options.seed = std::stoll(value(args, "--seed", "42"));
+    options.vae_tiling = std::stoi(value(args, "--vae-tiling", "0")) != 0;
+    options.vae_tile_size = std::stoi(value(args, "--vae-tile-size", "0"));
+    options.vae_tile_overlap = std::stof(value(args, "--vae-tile-overlap", "0.5"));
     options.think = mode == "think-image" || mode == "think-interleave";
     options.max_think_tokens = std::stoi(value(args, "--max-tokens", "1024"));
 

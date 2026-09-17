@@ -53,7 +53,9 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
     if (context_size < 0) throw std::invalid_argument("Context size must be nonnegative");
     cp.n_ctx = context_size ? context_size : descriptor.context_size;
     cp.n_batch = std::min<uint32_t>(cp.n_ctx, descriptor.batch_size);
-    cp.n_ubatch = cp.n_batch;
+    cp.n_ubatch = family_ == model_family::bagel
+        ? std::min<uint32_t>(cp.n_batch, 256)
+        : cp.n_batch;
     cp.n_seq_max = 1;
     cp.n_threads = 8;
     cp.n_threads_batch = 8;
