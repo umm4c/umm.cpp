@@ -31,14 +31,14 @@ case "${mode}" in
     *) ascend_die "the validated U1.5 build supports text, image, and think-image only" ;;
 esac
 
-# F32 generation is the validated U1.5 image path on Ascend 310P.
-model_dir=${MODEL_DIR:-${ASCEND_PROJECT_ROOT}/models/SenseNova-U1.5-8B-MoT-F32Gen-UMM}
+# The validated single-card U1.5 path keeps Q8 understanding and F16 generation resident.
+model_dir=${MODEL_DIR:-${ASCEND_PROJECT_ROOT}/models/SenseNova-U1.5-8B-MoT-Q8U-F16G-UMM}
 # Keep U1.5 on its validated binary: the BAGEL build uses a newer strict CANN
 # support check that rejects U1.5's offset RoPE during graph reservation.
 export BUILD_DIR=${BUILD_DIR:-build-cann-rebase}
 understanding_backend=${UNDERSTANDING_BACKEND:-CANN0}
-generation_backend=${GENERATION_BACKEND:-CANN0&CANN1}
-generation_max_vram=${GENERATION_MAX_VRAM:-CANN0=12,CANN1=38}
+generation_backend=${GENERATION_BACKEND:-CANN0}
+generation_max_vram=${GENERATION_MAX_VRAM:-CANN0=40}
 width=${WIDTH:-256}
 height=${HEIGHT:-256}
 steps=${STEPS:-8}
@@ -67,5 +67,5 @@ case "${mode}" in
         ;;
 esac
 
-export DEVICES=${DEVICES:-2,3}
+export DEVICES=${DEVICES:-2}
 ascend_run_umm "${model_dir}" "${input}" "${output}" "${args[@]}"

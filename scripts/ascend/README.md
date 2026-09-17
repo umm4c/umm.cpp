@@ -19,11 +19,8 @@ exposes `text`, `image`, and `think-image`; BAGEL exposes all seven modes.
 scripts/ascend/run-bagel.sh text 'Describe Ascend NPU.'
 STEPS=8 scripts/ascend/run-bagel.sh image 'A red apple on a wooden table'
 
-# Validated single-card Q8-understanding/F16-generation package
-MODEL_DIR=models/BAGEL-7B-MoT-Q8U-F16G-UMM DEVICES=2 \
-  UNDERSTANDING_BACKEND=CANN0 VISION_BACKEND=CANN0 \
-  GENERATION_BACKEND='diffusion=CANN0,vae=CANN0' \
-  GENERATION_MAX_VRAM=CANN0=40 \
+# Both runners default to their validated single-card Q8-understanding/F16-generation packages.
+DEVICES=2 \
   WIDTH=1024 HEIGHT=1024 STEPS=8 \
   scripts/ascend/run-bagel.sh image 'A red apple on a wooden table'
 
@@ -43,8 +40,7 @@ layouts are:
 | Model | Physical devices | Logical layout |
 | --- | --- | --- |
 | BAGEL Q8 understanding + F16 generation | `DEVICES=2` | LLM, diffusion, vision, and VAE on CANN0; validated at 1024x1024 with VAE tiling |
-| BAGEL F16 understanding + F16 generation | `DEVICES=2,3,4` | LLM/VAE CANN0, diffusion CANN1+CANN2, vision CANN1 |
-| U1.5 F32 generation | `DEVICES=2,3` | LLM CANN0, diffusion CANN0+CANN1 with 12/38 GiB budgets |
+| U1.5 Q8 understanding + F16 generation | `DEVICES=2` | LLM and diffusion on CANN0; validated at 2048x2048, 50 steps |
 
 The order in `DEVICES` defines the logical CANN indexes inside the container.
 For example, `DEVICES=4,5,6` maps physical devices 4/5/6 to CANN0/1/2.

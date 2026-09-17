@@ -29,11 +29,11 @@ prompt=${2:-A red apple on a rustic wooden table, studio photograph, detailed}
 input=${3:-${INPUT:-}}
 ascend_validate_mode "${mode}"
 
-model_dir=${MODEL_DIR:-${ASCEND_PROJECT_ROOT}/models/BAGEL-7B-MoT-F16-UMM}
+model_dir=${MODEL_DIR:-${ASCEND_PROJECT_ROOT}/models/BAGEL-7B-MoT-Q8U-F16G-UMM}
 understanding_backend=${UNDERSTANDING_BACKEND:-CANN0}
-vision_backend=${VISION_BACKEND:-CANN1}
-generation_backend=${GENERATION_BACKEND:-diffusion=CANN1&CANN2,vae=CANN0}
-generation_max_vram=${GENERATION_MAX_VRAM:-CANN1=14,CANN2=14}
+vision_backend=${VISION_BACKEND:-CANN0}
+generation_backend=${GENERATION_BACKEND:-diffusion=CANN0,vae=CANN0}
+generation_max_vram=${GENERATION_MAX_VRAM:-CANN0=40}
 width=${WIDTH:-256}
 height=${HEIGHT:-256}
 steps=${STEPS:-8}
@@ -76,5 +76,5 @@ case "${mode}" in
         ;;
 esac
 
-export DEVICES=${DEVICES:-2,3,4}
+export DEVICES=${DEVICES:-2}
 ascend_run_umm "${model_dir}" "${input}" "${output}" "${args[@]}"
