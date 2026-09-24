@@ -1,6 +1,7 @@
 #include "model-workflow.h"
 
 #include "llama-cpp-adapter.h"
+#include "sd-cpp-adapter.h"
 #include "stable-diffusion.h"
 
 #include <cmath>
@@ -27,6 +28,12 @@ const std::string u1_generation_system_prompt =
     "changed.\n\nGeneral Rules:\n- For any visible text in the image, follow the language specified for the rendered "
     "text in the user's description, not the language of the prompt. If no language is specified, use the user's input "
     "language.";
+
+const std::string u1_interleave_system_prompt =
+    "You are a multimodal assistant. Generate text and images together when the user asks for an illustrated answer. "
+    "In think mode, put reasoning between <think> and </think>; images may appear in that block. "
+    "In non-think mode, answer directly with text and images in their intended order. "
+    "Finish with a concise answer in the user's language.";
 
 std::string u1_chat_prompt(const std::string & user, const std::string & system = {}) {
     std::string result;
@@ -290,6 +297,56 @@ public:
             input && options.guidance > 1 ? options.image_guidance : 0.f,
             std::move(result));
     }
+
+    interleave_result interleave(workflow_context & context, const std::string & prompt,
+                                const image_options & requested, int max_text_tokens,
+                                int max_images) override {
+        if (max_text_tokens < 1 || max_images < 1) {
+            throw std::invalid_argument("max_text_tokens and max_images must be positive");
+        }
+        const auto options = normalize_image_options(family(), requested);
+        if (options.guidance != 1.f) {
+            throw std::invalid_argument("Interleaved generation currently requires --cfg 1");
+        }
+        context.load_image_engine();
+        auto & engine = context.language_model;
+        engine.reset();
+        engine.append(engine.tokenize(u1_chat_prompt(prompt, u1_interleave_system_prompt) +
+            (options.think ? "" : "<think>\n\n</think>\n\n")));
+
+        interleave_result result;
+        int text_tokens = 0;
+        while (text_tokens < max_text_tokens) {
+            const auto token = engine.greedy();
+            if (engine.is_end(token)) {
+                break;
+            }
+            const auto piece = engine.piece(token);
+            if (piece != "<img>") {
+                result.text += piece;
+                engine.append({token});
+                ++text_tokens;
+                continue;
+            }
+            if (static_cast<int>(result.images.size()) >= max_images) {
+                break;
+            }
+            engine.append({token});
+            context.transfer_prefix(conditioning_slot::conditional);
+
+            auto image_options = options;
+            image_options.seed += static_cast<int64_t>(result.images.size());
+            image_result image{options.width, options.height, {}, {}, {}, {}};
+            image = render_generated_image(context.image_engine(), prompt, image_options, 0.f,
+                                           std::move(image));
+            const image_input generated{image.width, image.height, image.rgb};
+            const auto embeddings = encode_u1_image_with_diffusion(context.image_engine(), generated);
+            engine.append_u1_generated_image_embeddings(embeddings, image.width / 32, image.height / 32);
+            result.text += "<image>";
+            result.images.push_back(std::move(image));
+        }
+        return result;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -371,6 +428,11 @@ public:
 // Workflow factory and default behavior
 
 model_workflow::~model_workflow() = default;
+
+interleave_result model_workflow::interleave(workflow_context &, const std::string &,
+                                            const image_options &, int, int) {
+    throw std::invalid_argument("Interleaved generation is not supported by the selected model");
+}
 
 std::string model_workflow::understand(workflow_context &, const image_input &, const std::string &, int, bool) {
     throw std::invalid_argument("Image understanding is not supported by the selected model");
