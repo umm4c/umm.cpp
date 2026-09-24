@@ -223,6 +223,38 @@ the base model defaults. In the Docker command above, mount
 --width 2048 --height 2048 --steps 8 --cfg 1 --shift 3 --seed 42
 ```
 
+### Generate interleaved text and images
+
+SenseNova U1.5 can continue writing after each generated image. The current
+single-context path supports CFG 1 and images with at most 256 spatial tokens;
+512 × 512 is a functional test size for the 32-pixel image grid. Use the
+distilled LoRA package with 8 denoising steps in the CANN container:
+
+```sh
+mkdir -p outputs
+docker run --rm --security-opt seccomp=unconfined \
+  --device /dev/davinci2 --device /dev/davinci_manager \
+  --device /dev/hisi_hdc --device /dev/devmm_svm \
+  -e GGML_SCHED_STRICT_ACCEL=1 \
+  -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
+  -v "$PWD/build-cann/bin:/usr/local/lib/umm:ro" \
+  -v /path/to/u1.5-lora-8step:/model:ro -v "$PWD/outputs:/output" \
+  umm-cann:8.5.0-mvp bash -lc '
+    export LD_LIBRARY_PATH=/usr/local/lib/umm:${LD_LIBRARY_PATH:-}
+    /usr/local/lib/umm/umm-cli --model /model --mode interleave \
+      --prompt "Write a short illustrated guide to growing a tomato plant." \
+      --output /output/tomato-guide \
+      --understanding-backend CANN0 --generation-backend CANN0 \
+      --generation-max-vram CANN0=40 --width 512 --height 512 \
+      --steps 8 --cfg 1 --shift 3 --max-images 2 --max-tokens 256
+  '
+```
+
+This writes `outputs/tomato-guide.txt` with `<image>` placeholders and one PNG
+per generated image. The number of images depends on the model response;
+`--max-images` is an upper bound. Replace `/dev/davinci2` with the physical
+device to use.
+
 ### Reason, then generate an image
 
 ```sh
@@ -243,7 +275,8 @@ Model-specific defaults:
   and a maximum size of 1024 × 1024.
 - For editing, omitting `--width` and `--height` preserves the prepared input
   dimensions. BAGEL also supports `--image-cfg`, which defaults to 1.5.
-- All models use the same `umm-cli` modes and command format.
+- Text and image modes share the same CLI format. Interleaved generation is
+  currently specific to SenseNova U1.5.
 
 ## C++ API
 
