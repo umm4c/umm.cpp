@@ -21,11 +21,12 @@ using option_map = std::map<std::string, std::string>;
 
 void print_help() {
     std::cout
-        << "umm-cli --model PACKAGE --mode text|image|think-image --prompt TEXT\n"
-           "        [--output image.png] [--max-tokens 256]\n"
+        << "umm-cli --model PACKAGE --mode text|image|think-image|interleave|think-interleave --prompt TEXT\n"
+           "        [--output image.png] [--max-tokens 256] [--max-images 2]\n"
            "        [--understanding-backend CANN0] [--generation-backend CANN0]\n"
            "        [--generation-max-vram CANN0=40]\n"
-           "        [--width 2048] [--height 2048] [--steps 50] [--cfg 4] [--shift 3] [--seed 42]\n";
+           "        [--width 2048] [--height 2048] [--steps 50] [--cfg 4] [--shift 3] [--seed 42]\n"
+           "        (interleave defaults: 512x512, cfg 1)\n";
 }
 
 option_map parse_arguments(int argc, char ** argv) {
@@ -43,7 +44,7 @@ option_map parse_arguments(int argc, char ** argv) {
     }
 
     const std::vector<std::string> known = {
-        "--model", "--mode", "--prompt", "--output", "--max-tokens",
+        "--model", "--mode", "--prompt", "--output", "--max-tokens", "--max-images",
         "--width", "--height", "--steps", "--cfg", "--shift", "--seed",
         "--understanding-backend", "--generation-backend", "--generation-max-vram",
     };
@@ -110,8 +111,9 @@ int run(int argc, char ** argv) {
     }
 
     const auto mode = value(args, "--mode", "text");
-    if (mode != "text" && mode != "image" && mode != "think-image") {
-        throw std::invalid_argument("Mode must be text, image, or think-image");
+    if (mode != "text" && mode != "image" && mode != "think-image" &&
+        mode != "interleave" && mode != "think-interleave") {
+        throw std::invalid_argument("Unsupported mode");
     }
 
     umm::session session(model, "", value(args, "--understanding-backend"),
@@ -121,15 +123,33 @@ int run(int argc, char ** argv) {
         return 0;
     }
 
+    const bool interleave_mode = mode == "interleave" || mode == "think-interleave";
     umm::image_options options;
-    options.width = std::stoi(value(args, "--width", "2048"));
-    options.height = std::stoi(value(args, "--height", "2048"));
+    options.width = std::stoi(value(args, "--width", interleave_mode ? "512" : "2048"));
+    options.height = std::stoi(value(args, "--height", interleave_mode ? "512" : "2048"));
     options.steps = std::stoi(value(args, "--steps", "50"));
-    options.guidance = std::stof(value(args, "--cfg", "4"));
+    options.guidance = std::stof(value(args, "--cfg", interleave_mode ? "1" : "4"));
     options.flow_shift = std::stof(value(args, "--shift", "3"));
     options.seed = std::stoll(value(args, "--seed", "42"));
-    options.think = mode == "think-image";
+    options.think = mode == "think-image" || mode == "think-interleave";
     options.max_think_tokens = std::stoi(value(args, "--max-tokens", "1024"));
+
+    if (interleave_mode) {
+        const auto result = session.interleave(prompt, options,
+            std::stoi(value(args, "--max-tokens", "256")),
+            std::stoi(value(args, "--max-images", "2")));
+        const auto output = std::filesystem::path(value(args, "--output", "interleave"));
+        for (size_t i = 0; i < result.images.size(); ++i) {
+            write_png(output.string() + "_image_" + std::to_string(i) + ".png", result.images[i]);
+        }
+        std::ofstream text_file(output.string() + ".txt");
+        if (!text_file) {
+            throw std::runtime_error("Could not write interleaved text output");
+        }
+        text_file << result.text;
+        std::cout << result.text << '\n';
+        return 0;
+    }
 
     const auto image = session.image(prompt, options);
     const auto output = std::filesystem::path(value(args, "--output", "image.png"));

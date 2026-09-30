@@ -37,6 +37,11 @@ public:
     // SenseNova U1 supplies spatial embeddings with a 2-D image grid.
     void append_u1_image_embeddings(const std::vector<float> & embeddings,
                                     int grid_width, int grid_height);
+    // The <img> token is already present after an image-generation request.
+    void append_u1_generated_image_embeddings(const std::vector<float> & embeddings,
+                                              int grid_width, int grid_height);
+    // Capacity for image embeddings before appending their start/end tokens.
+    size_t available_u1_generated_image_tokens() const;
     llama_token greedy() const;
     const float * logits() const;
     int vocab_size() const;
@@ -59,7 +64,8 @@ private:
     std::vector<llama_pos> positions_;
     llama_pos next_position_ = 0;
     bool has_logits_ = false;
-    std::vector<float> u1_boundary_embeddings_;
+    void append_u1_image_body(const std::vector<float> & embeddings,
+                              int grid_width, int grid_height);
 };
 
 }

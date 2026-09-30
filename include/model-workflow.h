@@ -38,6 +38,9 @@ public:
     // Generate an image, optionally conditioned on an input image for editing.
     virtual image_result generate(workflow_context & context, const std::string & prompt,
                                   const image_options & options, const image_input * input) = 0;
+    virtual interleave_result interleave(workflow_context & context, const std::string & prompt,
+                                         const image_options & options, int max_text_tokens,
+                                         int max_images);
 };
 
 // Construct the workflow matching the resolved model family.

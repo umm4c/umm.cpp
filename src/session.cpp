@@ -305,4 +305,13 @@ image_result session::edit(const image_input & image, const std::string & prompt
     return impl_->workflow->generate(context, prompt, options, &prepared);
 }
 
+interleave_result session::interleave(const std::string & prompt, const image_options & options,
+                                     int max_text_tokens, int max_images) {
+    if (impl_->language_model.family() != model_family::sensenova_u1) {
+        throw std::invalid_argument("Interleaved generation is supported only by SenseNova U1");
+    }
+    auto context = impl_->workflow_context_for_request();
+    return impl_->workflow->interleave(context, prompt, options, max_text_tokens, max_images);
+}
+
 }

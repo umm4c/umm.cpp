@@ -202,6 +202,36 @@ void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> &
 
 void llama_cpp_adapter::append_u1_image_embeddings(const std::vector<float> & embeddings,
                                                    int grid_width, int grid_height) {
+    const auto start = tokenize("<img>");
+    if (start.size() != 1) {
+        throw std::runtime_error("Missing SenseNova U1 image start token");
+    }
+    append(start);
+    append_u1_image_body(embeddings, grid_width, grid_height);
+}
+
+void llama_cpp_adapter::append_u1_generated_image_embeddings(const std::vector<float> & embeddings,
+                                                             int grid_width, int grid_height) {
+    const auto start = tokenize("<img>");
+    if (start.size() != 1 || tokens_.empty() || tokens_.back() != start.front()) {
+        throw std::runtime_error("Generated image must follow an appended <img> token");
+    }
+    append_u1_image_body(embeddings, grid_width, grid_height);
+}
+
+size_t llama_cpp_adapter::available_u1_generated_image_tokens() const {
+    if (family_ != model_family::sensenova_u1) {
+        throw std::invalid_argument("Generated image embeddings require SenseNova U1");
+    }
+    const size_t context_size = llama_n_ctx(context_.get());
+    if (tokens_.size() + 2 > context_size) {
+        return 0;
+    }
+    return std::min<size_t>(llama_n_ubatch(context_.get()), context_size - tokens_.size() - 2);
+}
+
+void llama_cpp_adapter::append_u1_image_body(const std::vector<float> & embeddings,
+                                             int grid_width, int grid_height) {
     if (family_ != model_family::sensenova_u1) {
         throw std::invalid_argument("Spatial image embeddings are only supported by SenseNova U1");
     }
@@ -211,72 +241,24 @@ void llama_cpp_adapter::append_u1_image_embeddings(const std::vector<float> & em
         throw std::invalid_argument("Invalid SenseNova U1 image embeddings or grid");
     }
     const size_t image_tokens = embeddings.size() / dim;
-    const size_t total_tokens = image_tokens + 2;
-    if (total_tokens > llama_n_ubatch(context_.get()) ||
-        tokens_.size() + total_tokens > llama_n_ctx(context_.get())) {
+    if (image_tokens > llama_n_ubatch(context_.get()) ||
+        tokens_.size() + image_tokens + 1 > llama_n_ctx(context_.get())) {
         throw std::runtime_error("Image group exceeds the SenseNova U1 context or batch capacity");
     }
-
-    auto * table = tensor("token_embd.weight");
-    const auto * traits = ggml_get_type_traits(table->type);
-    const auto row_bytes = ggml_row_size(table->type, dim);
-    const auto boundary = tokenize("<img></img>");
-    if (boundary.size() != 2) {
-        throw std::runtime_error("Missing SenseNova U1 image boundary tokens");
-    }
-    std::vector<float> input(total_tokens * dim);
-    if (u1_boundary_embeddings_.empty()) {
-        std::vector<uint8_t> row(row_bytes);
-        std::vector<uint8_t> full_table;
-        const auto * buffer_name = ggml_backend_buffer_name(table->buffer);
-        if (ggml_is_quantized(table->type) && std::strncmp(buffer_name, "CANN", 4) == 0) {
-            // CANN reverses Q8 layout for the whole tensor when reading it back.
-            full_table.resize(ggml_nbytes(table));
-            ggml_backend_tensor_get(table, full_table.data(), 0, full_table.size());
-        }
-        u1_boundary_embeddings_.resize(2 * dim);
-        for (int i = 0; i < 2; ++i) {
-            const size_t offset = size_t(boundary[i]) * row_bytes;
-            const uint8_t * source = nullptr;
-            if (full_table.empty()) {
-                ggml_backend_tensor_get(table, row.data(), offset, row_bytes);
-                source = row.data();
-            } else {
-                source = full_table.data() + offset;
-            }
-            float * dest = u1_boundary_embeddings_.data() + i * dim;
-            if (table->type == GGML_TYPE_F32) {
-                std::memcpy(dest, source, row_bytes);
-            } else if (traits->to_float) {
-                traits->to_float(source, dest, dim);
-            } else {
-                throw std::runtime_error("Unsupported token embedding type");
-            }
-        }
-    }
-    std::copy_n(u1_boundary_embeddings_.data(), dim, input.data());
-    std::copy_n(u1_boundary_embeddings_.data() + dim, dim, input.data() + (total_tokens - 1) * dim);
-    std::copy(embeddings.begin(), embeddings.end(), input.begin() + dim);
-
     const llama_pos temporal = next_position_;
-    std::vector<llama_pos> positions(total_tokens * 4, 0);
-    positions[0] = temporal;
+    std::vector<llama_pos> positions(image_tokens * 4, 0);
     for (size_t i = 0; i < image_tokens; ++i) {
-        const size_t index = i + 1;
-        positions[index] = temporal + 1;
-        positions[total_tokens + index] = static_cast<llama_pos>(i / grid_width);
-        positions[2 * total_tokens + index] = static_cast<llama_pos>(i % grid_width);
+        positions[i] = temporal;
+        positions[image_tokens + i] = static_cast<llama_pos>(i / grid_width);
+        positions[2 * image_tokens + i] = static_cast<llama_pos>(i % grid_width);
     }
-    positions[total_tokens - 1] = temporal + 2;
-
-    std::vector<int32_t> seq_counts(total_tokens, 1);
+    std::vector<int32_t> seq_counts(image_tokens, 1);
     llama_seq_id sequence = 0;
-    std::vector<llama_seq_id *> seq_ids(total_tokens, &sequence);
-    std::vector<int8_t> outputs(total_tokens, 0);
-    outputs.back() = 1;
+    std::vector<llama_seq_id *> seq_ids(image_tokens, &sequence);
+    std::vector<int8_t> outputs(image_tokens, 0);
     llama_batch batch{};
-    batch.n_tokens = total_tokens;
-    batch.embd = input.data();
+    batch.n_tokens = image_tokens;
+    batch.embd = const_cast<float *>(embeddings.data());
     batch.pos = positions.data();
     batch.n_seq_id = seq_counts.data();
     batch.seq_id = seq_ids.data();
@@ -288,15 +270,14 @@ void llama_cpp_adapter::append_u1_image_embeddings(const std::vector<float> & em
         throw std::runtime_error("SenseNova U1 image understanding decode failed");
     }
 
-    const size_t offset = tokens_.size();
-    tokens_.resize(offset + total_tokens, LLAMA_TOKEN_NULL);
-    tokens_[offset] = boundary.front();
-    tokens_.back() = boundary.back();
-    positions_.push_back(temporal);
-    positions_.insert(positions_.end(), image_tokens, temporal + 1);
-    positions_.push_back(temporal + 2);
-    next_position_ = temporal + 3;
-    has_logits_ = true;
+    tokens_.insert(tokens_.end(), image_tokens, LLAMA_TOKEN_NULL);
+    positions_.insert(positions_.end(), image_tokens, temporal);
+    next_position_ = temporal + 1;
+    const auto end = tokenize("</img>");
+    if (end.size() != 1) {
+        throw std::runtime_error("Missing SenseNova U1 image end token");
+    }
+    append(end);
 }
 
 // Logits and model tensor access -------------------------------------------
