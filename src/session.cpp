@@ -34,6 +34,16 @@ bool has_image_prefix_data(const sd_kv_prefix_t & prefix) {
            prefix.keys && prefix.values && prefix.layer_count;
 }
 
+int context_size_for_single_cann_u1(model_family family, const std::string & understanding_backend,
+                                    const std::string & generation_backend) {
+    if (family != model_family::sensenova_u1 || understanding_backend != generation_backend ||
+        (understanding_backend.rfind("CANN", 0) != 0 && understanding_backend.rfind("cann", 0) != 0)) {
+        return 0;
+    }
+    // Limit the scheduler reservation while both U1.5 GGUFs share one 310P.
+    return 2048;
+}
+
 std::vector<llama_pos> image_prefix_positions(const sd_kv_prefix_t & prefix) {
     if (prefix.positions) {
         return {prefix.positions, prefix.positions + prefix.token_count};
@@ -81,7 +91,9 @@ struct session::impl {
 session::impl::impl(model_package package_, const std::string & understanding_backend,
                     const std::string & generation_backend_, const std::string & generation_max_vram_)
     : package(std::move(package_)),
-      language_model(package.component("understanding"), 0, 99, false, understanding_backend),
+      language_model(package.component("understanding"),
+                     context_size_for_single_cann_u1(package.family, understanding_backend, generation_backend_),
+                     99, false, understanding_backend),
       workflow(create_model_workflow(language_model.family())),
       generation_model(package.component("generation")),
       generation_backend(generation_backend_),

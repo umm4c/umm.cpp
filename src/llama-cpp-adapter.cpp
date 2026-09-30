@@ -220,23 +220,42 @@ void llama_cpp_adapter::append_u1_image_embeddings(const std::vector<float> & em
     auto * table = tensor("token_embd.weight");
     const auto * traits = ggml_get_type_traits(table->type);
     const auto row_bytes = ggml_row_size(table->type, dim);
-    std::vector<uint8_t> row(row_bytes);
     const auto boundary = tokenize("<img></img>");
     if (boundary.size() != 2) {
         throw std::runtime_error("Missing SenseNova U1 image boundary tokens");
     }
     std::vector<float> input(total_tokens * dim);
-    for (int i = 0; i < 2; ++i) {
-        ggml_backend_tensor_get(table, row.data(), boundary[i] * row_bytes, row_bytes);
-        float * dest = input.data() + (i == 0 ? 0 : total_tokens - 1) * dim;
-        if (table->type == GGML_TYPE_F32) {
-            std::memcpy(dest, row.data(), row_bytes);
-        } else if (traits->to_float) {
-            traits->to_float(row.data(), dest, dim);
-        } else {
-            throw std::runtime_error("Unsupported token embedding type");
+    if (u1_boundary_embeddings_.empty()) {
+        std::vector<uint8_t> row(row_bytes);
+        std::vector<uint8_t> full_table;
+        const auto * buffer_name = ggml_backend_buffer_name(table->buffer);
+        if (ggml_is_quantized(table->type) && std::strncmp(buffer_name, "CANN", 4) == 0) {
+            // CANN reverses Q8 layout for the whole tensor when reading it back.
+            full_table.resize(ggml_nbytes(table));
+            ggml_backend_tensor_get(table, full_table.data(), 0, full_table.size());
+        }
+        u1_boundary_embeddings_.resize(2 * dim);
+        for (int i = 0; i < 2; ++i) {
+            const size_t offset = size_t(boundary[i]) * row_bytes;
+            const uint8_t * source = nullptr;
+            if (full_table.empty()) {
+                ggml_backend_tensor_get(table, row.data(), offset, row_bytes);
+                source = row.data();
+            } else {
+                source = full_table.data() + offset;
+            }
+            float * dest = u1_boundary_embeddings_.data() + i * dim;
+            if (table->type == GGML_TYPE_F32) {
+                std::memcpy(dest, source, row_bytes);
+            } else if (traits->to_float) {
+                traits->to_float(source, dest, dim);
+            } else {
+                throw std::runtime_error("Unsupported token embedding type");
+            }
         }
     }
+    std::copy_n(u1_boundary_embeddings_.data(), dim, input.data());
+    std::copy_n(u1_boundary_embeddings_.data() + dim, dim, input.data() + (total_tokens - 1) * dim);
     std::copy(embeddings.begin(), embeddings.end(), input.begin() + dim);
 
     const llama_pos temporal = next_position_;

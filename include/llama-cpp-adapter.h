@@ -59,6 +59,7 @@ private:
     std::vector<llama_pos> positions_;
     llama_pos next_position_ = 0;
     bool has_logits_ = false;
+    std::vector<float> u1_boundary_embeddings_;
 };
 
 }
