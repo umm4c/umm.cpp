@@ -308,11 +308,16 @@ public:
         if (options.guidance != 1.f) {
             throw std::invalid_argument("Interleaved generation currently requires --cfg 1");
         }
-        context.load_image_engine();
         auto & engine = context.language_model;
         engine.reset();
         engine.append(engine.tokenize(u1_chat_prompt(prompt, u1_interleave_system_prompt) +
-            (options.think ? "" : "<think>\n\n</think>\n\n")));
+            (options.think ? "<think>\n" : "<think>\n\n</think>\n\n")));
+        const auto & descriptor = model_descriptor_for(family());
+        const size_t image_tokens = size_t(options.width / descriptor.image_stride) *
+                                    size_t(options.height / descriptor.image_stride);
+        if (image_tokens > engine.available_u1_generated_image_tokens()) {
+            throw std::invalid_argument("Image dimensions exceed the interleaved understanding context");
+        }
 
         interleave_result result;
         int text_tokens = 0;
@@ -331,7 +336,11 @@ public:
             if (static_cast<int>(result.images.size()) >= max_images) {
                 break;
             }
+            if (image_tokens > engine.available_u1_generated_image_tokens()) {
+                throw std::runtime_error("No understanding context remains for another generated image");
+            }
             engine.append({token});
+            context.load_image_engine();
             context.transfer_prefix(conditioning_slot::conditional);
 
             auto image_options = options;

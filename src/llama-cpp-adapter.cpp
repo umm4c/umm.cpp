@@ -219,6 +219,17 @@ void llama_cpp_adapter::append_u1_generated_image_embeddings(const std::vector<f
     append_u1_image_body(embeddings, grid_width, grid_height);
 }
 
+size_t llama_cpp_adapter::available_u1_generated_image_tokens() const {
+    if (family_ != model_family::sensenova_u1) {
+        throw std::invalid_argument("Generated image embeddings require SenseNova U1");
+    }
+    const size_t context_size = llama_n_ctx(context_.get());
+    if (tokens_.size() + 2 > context_size) {
+        return 0;
+    }
+    return std::min<size_t>(llama_n_ubatch(context_.get()), context_size - tokens_.size() - 2);
+}
+
 void llama_cpp_adapter::append_u1_image_body(const std::vector<float> & embeddings,
                                              int grid_width, int grid_height) {
     if (family_ != model_family::sensenova_u1) {

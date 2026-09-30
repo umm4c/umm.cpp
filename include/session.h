@@ -59,7 +59,8 @@ public:
                            int max_tokens = 256, bool think = false);
     image_result image(const std::string & prompt, const image_options & options = {});
     image_result edit(const image_input & image, const std::string & prompt, const image_options & options = {});
-    interleave_result interleave(const std::string & prompt, const image_options & options = {},
+    interleave_result interleave(const std::string & prompt,
+                                 const image_options & options = image_options{512, 512, 50, 1.0f},
                                  int max_text_tokens = 256, int max_images = 2);
 
 private:

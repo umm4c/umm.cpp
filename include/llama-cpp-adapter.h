@@ -40,6 +40,8 @@ public:
     // The <img> token is already present after an image-generation request.
     void append_u1_generated_image_embeddings(const std::vector<float> & embeddings,
                                               int grid_width, int grid_height);
+    // Capacity for image embeddings before appending their start/end tokens.
+    size_t available_u1_generated_image_tokens() const;
     llama_token greedy() const;
     const float * logits() const;
     int vocab_size() const;

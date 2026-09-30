@@ -226,9 +226,10 @@ the base model defaults. In the Docker command above, mount
 ### Generate interleaved text and images
 
 SenseNova U1.5 can continue writing after each generated image. The current
-single-context path supports CFG 1 and images with at most 256 spatial tokens;
-512 × 512 is a functional test size for the 32-pixel image grid. Use the
-distilled LoRA package with 8 denoising steps in the CANN container:
+single-context path requires CFG 1. The default 512 × 512 size has 256 spatial
+tokens and is the validated functional test size; larger sizes require enough
+remaining understanding context. Use the distilled LoRA package with 8
+denoising steps in the CANN container:
 
 ```sh
 mkdir -p outputs

@@ -25,7 +25,8 @@ void print_help() {
            "        [--output image.png] [--max-tokens 256] [--max-images 2]\n"
            "        [--understanding-backend CANN0] [--generation-backend CANN0]\n"
            "        [--generation-max-vram CANN0=40]\n"
-           "        [--width 2048] [--height 2048] [--steps 50] [--cfg 4] [--shift 3] [--seed 42]\n";
+           "        [--width 2048] [--height 2048] [--steps 50] [--cfg 4] [--shift 3] [--seed 42]\n"
+           "        (interleave defaults: 512x512, cfg 1)\n";
 }
 
 option_map parse_arguments(int argc, char ** argv) {
@@ -122,11 +123,11 @@ int run(int argc, char ** argv) {
         return 0;
     }
 
-    umm::image_options options;
-    options.width = std::stoi(value(args, "--width", "2048"));
-    options.height = std::stoi(value(args, "--height", "2048"));
-    options.steps = std::stoi(value(args, "--steps", "50"));
     const bool interleave_mode = mode == "interleave" || mode == "think-interleave";
+    umm::image_options options;
+    options.width = std::stoi(value(args, "--width", interleave_mode ? "512" : "2048"));
+    options.height = std::stoi(value(args, "--height", interleave_mode ? "512" : "2048"));
+    options.steps = std::stoi(value(args, "--steps", "50"));
     options.guidance = std::stof(value(args, "--cfg", interleave_mode ? "1" : "4"));
     options.flow_shift = std::stof(value(args, "--shift", "3"));
     options.seed = std::stoll(value(args, "--seed", "42"));
