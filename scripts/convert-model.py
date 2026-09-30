@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 import math
@@ -179,6 +180,98 @@ def tensor_type_info(dtype: str) -> tuple[np.dtype, gguf.GGMLQuantizationType]:
         raise ValueError(f"Unsupported generation tensor dtype: {dtype}") from error
 
 
+def generation_storage_type(source_type: str, outtype: str | None) -> str:
+    return outtype.upper() if source_type == "BF16" and outtype in ("f16", "f32") else source_type
+
+
+def tensor_source_type(tensor: torch.Tensor) -> str:
+    if tensor.dtype == torch.bfloat16:
+        return "BF16"
+    if tensor.dtype == torch.float16:
+        return "F16"
+    if tensor.dtype == torch.float32:
+        return "F32"
+    raise ValueError(f"Unsupported generation tensor dtype: {tensor.dtype}")
+
+
+def generation_tensor_data(tensor: torch.Tensor, storage_type: str) -> np.ndarray:
+    if storage_type == "BF16":
+        return tensor.to(torch.bfloat16).view(torch.uint16).numpy()
+    if storage_type == "F16":
+        return tensor.to(torch.float16).numpy()
+    if storage_type == "F32":
+        return tensor.to(torch.float32).numpy()
+    raise ValueError(f"Unsupported generation storage dtype: {storage_type}")
+
+
+class LoRAAdapter:
+    """A validated, file-backed LoRA adapter fused while generation weights stream.
+
+    Official U1.5 adapters use either native parameter names or the
+    ``diffusion_model.``-prefixed form accepted by the upstream loader. The
+    converted package stores native names, so only this mapping belongs here;
+    no inference-time adapter implementation is required.
+    """
+
+    prefix = "diffusion_model."
+    down_suffix = ".lora_down.weight"
+    up_suffix = ".lora_up.weight"
+    alpha_suffix = ".alpha"
+
+    def __init__(self, path: Path, strength: float) -> None:
+        if not math.isfinite(strength) or strength < 0:
+            raise ValueError("LoRA strength must be finite and nonnegative")
+        self.path = path.resolve(strict=True)
+        self.strength = strength
+        self.targets: dict[str, tuple[str, str, str]] = {}
+        with safe_open(self.path, framework="pt", device="cpu") as tensors:
+            keys = set(tensors.keys())
+        key_prefix = self.prefix if any(key.startswith(self.prefix) for key in keys) else ""
+        for down_name in sorted(key for key in keys if key.endswith(self.down_suffix)):
+            if not down_name.startswith(key_prefix):
+                raise ValueError(f"Unsupported LoRA tensor name: {down_name}")
+            stem = down_name[: -len(self.down_suffix)]
+            up_name = stem + self.up_suffix
+            if up_name not in keys:
+                raise ValueError(f"LoRA is missing paired tensor {up_name}")
+            target = stem[len(key_prefix):] + ".weight"
+            if target in self.targets:
+                raise ValueError(f"LoRA defines {target} more than once")
+            self.targets[target] = (down_name, up_name, stem + self.alpha_suffix)
+        if not self.targets:
+            raise ValueError("LoRA contains no .lora_down.weight tensors")
+
+    def validate_targets(self, generation_names: set[str]) -> None:
+        unmatched = sorted(set(self.targets) - generation_names)
+        if unmatched:
+            preview = ", ".join(unmatched[:4])
+            suffix = " ..." if len(unmatched) > 4 else ""
+            raise ValueError(
+                "LoRA targets are absent from the U1.5 generation weights: "
+                f"{preview}{suffix}"
+            )
+
+    def merge(self, name: str, tensor: torch.Tensor, lora_tensors) -> torch.Tensor:
+        entry = self.targets.get(name)
+        if entry is None:
+            return tensor
+        down_name, up_name, alpha_name = entry
+        down = lora_tensors.get_tensor(down_name)
+        up = lora_tensors.get_tensor(up_name)
+        if tensor.ndim != 2 or down.ndim != 2 or up.ndim != 2:
+            raise ValueError(f"LoRA target {name} must use two-dimensional matrices")
+        if down.shape[1] != tensor.shape[1] or up.shape[0] != tensor.shape[0] or up.shape[1] != down.shape[0]:
+            raise ValueError(
+                f"LoRA shape mismatch for {name}: base={tuple(tensor.shape)}, "
+                f"down={tuple(down.shape)}, up={tuple(up.shape)}"
+            )
+        alpha = float(lora_tensors.get_tensor(alpha_name)) if alpha_name in lora_tensors.keys() else down.shape[0]
+        if not math.isfinite(alpha):
+            raise ValueError(f"LoRA alpha must be finite for {name}")
+        delta = torch.matmul(up.to(torch.float32), down.to(torch.float32))
+        return tensor.to(torch.float32).add_(delta, alpha=self.strength * alpha / down.shape[0])
+
+
 def selected_generation_tensors(
     shards: Iterable[Path], spec: ModelSpec
 ) -> list[tuple[Path, list[str]]]:
@@ -195,6 +288,7 @@ def write_generation(
     output: Path,
     architecture: str = "sensenova_u1",
     outtype: str | None = None,
+    lora: LoRAAdapter | None = None,
 ) -> int:
     """Write the generation-only GGUF while streaming source tensors."""
 
@@ -204,6 +298,8 @@ def write_generation(
     missing = spec.required_generation_tensors - names
     if missing:
         raise ValueError(f"Missing generation tensors: {sorted(missing)}")
+    if lora is not None:
+        lora.validate_targets(names)
 
     writer = gguf.GGUFWriter(output, architecture)
     try:
@@ -212,11 +308,7 @@ def write_generation(
                 for name in shard_names:
                     tensor = tensors.get_slice(name)
                     source_type = tensor.get_dtype()
-                    target_type = (
-                        outtype.upper()
-                        if source_type == "BF16" and outtype in ("f16", "f32")
-                        else source_type
-                    )
+                    target_type = generation_storage_type(source_type, outtype)
                     dtype, ggml_type = tensor_type_info(target_type)
                     shape = tensor.get_shape()
                     writer.add_tensor_info(
@@ -230,17 +322,19 @@ def write_generation(
         writer.write_kv_data_to_file()
         writer.write_ti_data_to_file()
 
-        # Stream one tensor at a time, preserving source precision and bytes.
-        for shard, shard_names in selected:
-            with safe_open(shard, framework="pt", device="cpu") as tensors:
-                for name in shard_names:
-                    tensor = tensors.get_tensor(name)
-                    if tensor.dtype == torch.bfloat16 and outtype in ("f16", "f32"):
-                        data = tensor.to(torch.float16 if outtype == "f16" else torch.float32)
-                    else:
-                        data = tensor.view(torch.uint16) if tensor.dtype == torch.bfloat16 else tensor
-                    writer.write_tensor_data(data.numpy())
-                    del tensor, data
+        # Stream one base tensor at a time. The adapter stays memory-mapped and
+        # only materializes the two low-rank matrices for matching weights.
+        with safe_open(lora.path, framework="pt", device="cpu") if lora is not None else nullcontext() as lora_tensors:
+            for shard, shard_names in selected:
+                with safe_open(shard, framework="pt", device="cpu") as tensors:
+                    for name in shard_names:
+                        tensor = tensors.get_tensor(name)
+                        storage_type = generation_storage_type(tensor_source_type(tensor), outtype)
+                        if lora is not None:
+                            tensor = lora.merge(name, tensor, lora_tensors)
+                        data = generation_tensor_data(tensor, storage_type)
+                        writer.write_tensor_data(data)
+                        del tensor, data
     finally:
         writer.close()
     return len(names)
@@ -284,7 +378,14 @@ def build_manifest(spec: ModelSpec) -> dict:
     }
 
 
-def convert(source: Path, output: Path, outtype: str, generation_outtype: str | None = None) -> None:
+def convert(
+    source: Path,
+    output: Path,
+    outtype: str,
+    generation_outtype: str | None = None,
+    lora_path: Path | None = None,
+    lora_strength: float = 1.0,
+) -> None:
     """Convert a checkpoint into a package using an atomic temporary directory."""
 
     source = source.resolve(strict=True)
@@ -293,6 +394,9 @@ def convert(source: Path, output: Path, outtype: str, generation_outtype: str | 
         raise ValueError(f"Output already exists: {output}; choose a new directory")
 
     spec = spec_for(validate_config(source))
+    if lora_path is not None and spec != U1_SPEC:
+        raise ValueError("LoRA fusion currently supports SenseNova U1.5 only")
+    lora = LoRAAdapter(lora_path, lora_strength) if lora_path is not None else None
     shards = source_shards(source, spec.architecture)
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -310,8 +414,11 @@ def convert(source: Path, output: Path, outtype: str, generation_outtype: str | 
             package / "generation.gguf",
             spec.architecture,
             generation_outtype,
+            lora,
         )
         manifest = build_manifest(spec)
+        if lora is not None:
+            manifest["merged_lora"] = {"file": lora.path.name, "strength": lora.strength}
         if spec.is_bagel:
             copy_bagel_components(source, package, manifest)
         (package / "model.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -342,13 +449,31 @@ def parse_args() -> argparse.Namespace:
         choices=("bf16", "f16", "f32"),
         help="Convert BF16 generation weights to this format (default: preserve source precision)",
     )
+    parser.add_argument(
+        "--lora",
+        type=Path,
+        help="Official SenseNova U1.5 LoRA safetensors file to merge into generation weights",
+    )
+    parser.add_argument(
+        "--lora-strength",
+        type=float,
+        default=1.0,
+        help="Scale for the fused LoRA delta (default: 1.0)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     try:
-        convert(args.checkpoint, args.output, args.outtype, args.generation_outtype)
+        convert(
+            args.checkpoint,
+            args.output,
+            args.outtype,
+            args.generation_outtype,
+            args.lora,
+            args.lora_strength,
+        )
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         raise SystemExit(f"umm conversion: {error}")
 

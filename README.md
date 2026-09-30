@@ -135,6 +135,22 @@ python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1 \
 python scripts/convert-model.py /path/to/BAGEL-7B-MoT --output /path/to/bagel
 ```
 
+The official `SenseNova-U1.5-8B-MoT-LoRA-8step` adapter is fused into the
+generation weights while converting a released `SenseNova-U1.5-8B-MoT` base
+checkpoint. It is not compatible with the Preview checkpoint:
+
+```sh
+python scripts/convert-model.py /path/to/SenseNova-U1.5-8B-MoT \
+  --output /path/to/u1.5-lora-8step \
+  --outtype q8_0 --generation-outtype f16 \
+  --lora /path/to/SenseNova-U1.5-8B-MoT-LoRA-8step.safetensors
+```
+
+`--lora-strength` scales the merged delta and defaults to `1.0`. The converter
+checks all adapter targets before writing the package, and records the merged
+adapter filename and strength in `model.json`; inference does not need the
+adapter file afterwards.
+
 The resulting package contains a `model.json` manifest and model-family-specific
 components:
 
@@ -198,6 +214,14 @@ validated single-card layout.
 When both U1.5 components use the same CANN device, UMM uses a 2048-token
 understanding context to keep both sets of weights resident. Image-understanding
 requests whose input needs more than that context require a larger-memory setup.
+
+For the distilled official 8-step LoRA, use its sampling settings rather than
+the base model defaults. In the Docker command above, mount
+`/path/to/u1.5-lora-8step` as `/model` and add these arguments to `umm-cli`:
+
+```sh
+--width 2048 --height 2048 --steps 8 --cfg 1 --shift 3 --seed 42
+```
 
 ### Reason, then generate an image
 
