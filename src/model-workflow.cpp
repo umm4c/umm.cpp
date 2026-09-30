@@ -37,7 +37,7 @@ std::string u1_chat_prompt(const std::string & user, const std::string & system 
 }
 
 std::string u1_text_prompt(const std::string & user) {
-    return u1_chat_prompt(user);
+    return u1_chat_prompt(user) + "<think>\n\n</think>\n\n";
 }
 
 std::string u1_image_prompt(const std::string & user, bool think) {
