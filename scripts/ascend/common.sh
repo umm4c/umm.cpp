@@ -16,7 +16,7 @@ ascend_require_command() {
 
 ascend_validate_mode() {
     case "$1" in
-        text|image|think-image|understand|think-understand|edit|think-edit) ;;
+        text|image|think-image|interleave|think-interleave|understand|think-understand|edit|think-edit) ;;
         *) ascend_die "unsupported mode '$1'" ;;
     esac
 }
@@ -30,7 +30,7 @@ ascend_mode_needs_input() {
 
 ascend_mode_writes_image() {
     case "$1" in
-        image|think-image|edit|think-edit) return 0 ;;
+        image|think-image|interleave|think-interleave|edit|think-edit) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -66,9 +66,10 @@ ascend_run_umm() {
 
     ascend_require_command docker
     [[ -d ${model_host} ]] || ascend_die "model directory not found: ${model_host}"
+    model_host=$(realpath "${model_host}")
 
     local docker_image=${DOCKER_IMAGE:-umm-cann:8.5.0-mvp}
-    local build_dir=${BUILD_DIR:-build-cann-bagel}
+    local build_dir=${BUILD_DIR:-build-cann}
     local devices_csv=${DEVICES:-2,3,4}
     local container_name=${CONTAINER_NAME:-umm-ascend-$(date +%Y%m%d-%H%M%S)-$$}
     local strict_accel=${STRICT_ACCEL:-1}
@@ -114,7 +115,8 @@ ascend_run_umm() {
         "${build_root}/bin/umm-cli" "$@"
         status=$?
         if [[ -n ${UMM_OUTPUT_FILE:-} ]]; then
-            chmod a+r "${UMM_OUTPUT_FILE}" "${UMM_OUTPUT_FILE}.json" 2>/dev/null || true
+            chmod a+r "${UMM_OUTPUT_FILE}" "${UMM_OUTPUT_FILE}.json" \
+                "${UMM_OUTPUT_FILE}.txt" "${UMM_OUTPUT_FILE}"_image_*.png 2>/dev/null || true
         fi
         exit "${status}"
     ' bash "/workspace/umm/${build_dir}" "${cli_args[@]}"

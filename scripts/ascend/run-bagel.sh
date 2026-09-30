@@ -28,8 +28,14 @@ mode=${1:-image}
 prompt=${2:-A red apple on a rustic wooden table, studio photograph, detailed}
 input=${3:-${INPUT:-}}
 ascend_validate_mode "${mode}"
+case "${mode}" in
+    interleave|think-interleave) ascend_die "BAGEL does not support mode '${mode}'" ;;
+esac
 
 model_dir=${MODEL_DIR:-${ASCEND_PROJECT_ROOT}/models/BAGEL-7B-MoT-Q8U-F16G-UMM}
+if ascend_mode_needs_input "${mode}" && [[ ${model_dir} == *Q8* ]]; then
+    ascend_die "BAGEL Q8 single-card understanding/editing is not validated; use an F16 package and explicit multi-card backends"
+fi
 understanding_backend=${UNDERSTANDING_BACKEND:-CANN0}
 vision_backend=${VISION_BACKEND:-CANN0}
 generation_backend=${GENERATION_BACKEND:-diffusion=CANN0,vae=CANN0}

@@ -27,7 +27,7 @@ ascend_benchmark() {
     {
         printf 'model=%s\nmode=%s\nprompt=%s\nrepeats=%s\nwarmup=%s\n' \
             "${model_name}" "${mode}" "${prompt}" "${repeats}" "${warmup}"
-        env | LC_ALL=C sort | grep -E '^(MODEL_DIR|BUILD_DIR|DOCKER_IMAGE|DEVICES|STRICT_ACCEL|UNDERSTANDING_BACKEND|VISION_BACKEND|GENERATION_BACKEND|GENERATION_MAX_VRAM|WIDTH|HEIGHT|STEPS|CFG|IMAGE_CFG|SHIFT|SEED|MAX_TOKENS)=' || true
+        env | LC_ALL=C sort | grep -E '^(MODEL_DIR|BUILD_DIR|DOCKER_IMAGE|DEVICES|STRICT_ACCEL|UNDERSTANDING_BACKEND|VISION_BACKEND|GENERATION_BACKEND|GENERATION_MAX_VRAM|WIDTH|HEIGHT|STEPS|CFG|IMAGE_CFG|SHIFT|SEED|MAX_TOKENS|MAX_IMAGES|VAE_TILING|VAE_TILE_SIZE|VAE_TILE_OVERLAP)=' || true
     } >"${result_dir}/configuration.txt"
     npu-smi info >"${result_dir}/npu-before.txt"
 
@@ -41,7 +41,11 @@ ascend_benchmark() {
             measured_index=$((index - warmup))
         fi
 
-        output="${result_dir}/outputs/${phase}-${measured_index}.png"
+        if [[ ${mode} == interleave || ${mode} == think-interleave ]]; then
+            output="${result_dir}/outputs/${phase}-${measured_index}"
+        else
+            output="${result_dir}/outputs/${phase}-${measured_index}.png"
+        fi
         log_file="${result_dir}/logs/${phase}-${measured_index}.log"
         npu_file="${result_dir}/npu/${phase}-${measured_index}.log"
 
@@ -73,6 +77,8 @@ ascend_benchmark() {
 
         if ! ascend_mode_writes_image "${mode}"; then
             output=
+        elif [[ ${mode} == interleave || ${mode} == think-interleave ]]; then
+            output="${output}.txt"
         fi
         printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
             "${model_name}" "${mode}" "${phase}" "${measured_index}" "${status}" \

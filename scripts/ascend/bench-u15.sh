@@ -19,6 +19,10 @@ fi
 mode=${1:-image}
 prompt=${2:-A red apple on a rustic wooden table, studio photograph, detailed}
 input=${3:-${INPUT:-}}
-export WIDTH=${WIDTH:-256} HEIGHT=${HEIGHT:-256} STEPS=${STEPS:-8} CFG=${CFG:-4}
+if [[ ${mode} == interleave || ${mode} == think-interleave ]]; then
+    export WIDTH=${WIDTH:-512} HEIGHT=${HEIGHT:-512} STEPS=${STEPS:-8} CFG=${CFG:-1}
+else
+    export WIDTH=${WIDTH:-256} HEIGHT=${HEIGHT:-256} STEPS=${STEPS:-8} CFG=${CFG:-4}
+fi
 ascend_validate_mode "${mode}"
 ascend_benchmark u15 "${script_dir}/run-u15.sh" "${mode}" "${prompt}" "${input}"

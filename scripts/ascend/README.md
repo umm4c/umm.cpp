@@ -5,12 +5,19 @@ The four model-facing scripts run the validated CANN build inside
 the selected output directory read-write, pass through the requested Ascend
 devices, and enable `GGML_SCHED_STRICT_ACCEL=1` by default.
 
-The BAGEL runner defaults to `build-cann-bagel`. The U1.5 runner defaults to
-`build-cann-rebase`, which is the currently validated U1.5 binary. Do not point
-U1.5 at `build-cann-bagel`: its newer strict support check rejects U1.5's offset
-RoPE during graph reservation. `BUILD_DIR` remains configurable for testing a
-new unified build after that regression is fixed. The validated U1.5 binary
-exposes `text`, `image`, and `think-image`; BAGEL exposes all seven modes.
+Both runners use the current submodule revisions and default to `build-cann`.
+Build this directory in the CANN container before running either script, or
+set `BUILD_DIR` to another build directory. U1.5 supports text, image, and
+interleaved text/image generation. BAGEL understanding and editing require the
+F16 multi-card layout; the Q8 single-card path is for text and image generation.
+
+For example, from the repository root with the CANN container available:
+
+```bash
+docker run --rm --security-opt seccomp=unconfined -v "$PWD:/workspace/umm" \
+  -w /workspace/umm umm-cann:8.5.0-mvp bash -lc \
+  'cmake -S . -B build-cann -DCMAKE_BUILD_TYPE=Release -DGGML_CANN=ON -DSOC_TYPE=Ascend310P3 && cmake --build build-cann -j8'
+```
 
 ## Launch scripts
 
@@ -24,9 +31,12 @@ DEVICES=2 \
   WIDTH=1024 HEIGHT=1024 STEPS=8 \
   scripts/ascend/run-bagel.sh image 'A red apple on a wooden table'
 
-# BAGEL understanding/editing; the third positional argument is the input image
-scripts/ascend/run-bagel.sh understand 'What is shown?' outputs/apple.png
-scripts/ascend/run-bagel.sh edit 'Turn the apple green' outputs/apple.png
+# BAGEL understanding/editing require the F16 package and a multi-card layout.
+MODEL_DIR=models/BAGEL-7B-MoT-F16-UMM DEVICES=2,3,4 \
+  UNDERSTANDING_BACKEND=CANN0 VISION_BACKEND=CANN1 \
+  GENERATION_BACKEND='diffusion=CANN1&CANN2,vae=CANN0' \
+  GENERATION_MAX_VRAM=CANN1=14,CANN2=14 \
+  scripts/ascend/run-bagel.sh understand 'What is shown?' outputs/apple.png
 
 # SenseNova U1.5
 scripts/ascend/run-u15.sh text '用一句话介绍华为昇腾。'
@@ -39,7 +49,8 @@ layouts are:
 
 | Model | Physical devices | Logical layout |
 | --- | --- | --- |
-| BAGEL Q8 understanding + F16 generation | `DEVICES=2` | LLM, diffusion, vision, and VAE on CANN0; validated at 1024x1024 with VAE tiling |
+| BAGEL Q8 understanding + F16 generation | `DEVICES=2` | Text-to-image on CANN0; validated at 1024x1024 with VAE tiling. Q8 understanding/editing remain unvalidated. |
+| BAGEL F16 understanding + F16 generation | `DEVICES=2,3,4` | Previously validated seven-mode layout: LLM/VAE CANN0, diffusion CANN1+CANN2, vision CANN1. Recheck after rebase. |
 | U1.5 Q8 understanding + F16 generation | `DEVICES=2` | LLM and diffusion on CANN0; validated at 2048x2048, 50 steps |
 
 The order in `DEVICES` defines the logical CANN indexes inside the container.
