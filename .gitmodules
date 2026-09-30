@@ -1,8 +1,8 @@
 [submodule "third_party/llama.cpp"]
 	path = third_party/llama.cpp
-	url = git@github.com:Maphist0/llama.cpp-pub.git
-	branch = ascend-310p-u15-npu
+	url = https://github.com/umm4c/llama.cpp.git
+	branch = master
 [submodule "third_party/stable-diffusion.cpp"]
 	path = third_party/stable-diffusion.cpp
-	url = https://github.com/Maphist0/stable-diffusion.cpp-pub.git
-	branch = ascend-310p-u15-npu
+	url = https://github.com/umm4c/stable-diffusion.cpp.git
+	branch = master

@@ -1,14 +1,14 @@
 {
   "llama.cpp": {
-    "url": "git@github.com:Maphist0/llama.cpp-pub.git",
+    "url": "https://github.com/umm4c/llama.cpp.git",
     "upstream": "https://github.com/ggml-org/llama.cpp.git",
-    "revision": "e64a524ad12643355080d4cc668743b25e928c8f",
-    "branch": "ascend-310p-u15-npu"
+    "revision": "56f9b27073717dc35f3164396f02b4741910b181",
+    "branch": "master"
   },
   "stable-diffusion.cpp": {
-    "url": "https://github.com/Maphist0/stable-diffusion.cpp-pub.git",
+    "url": "https://github.com/umm4c/stable-diffusion.cpp.git",
     "upstream": "https://github.com/leejet/stable-diffusion.cpp.git",
-    "revision": "04333ede44dda7c7deceda0b9d8ccc67af47ae6d",
-    "branch": "ascend-310p-u15-npu"
+    "revision": "e3f4219085db507f53f110c43f0f40d61b378333",
+    "branch": "master"
   }
 }
