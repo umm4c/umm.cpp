@@ -337,7 +337,10 @@ public:
                 break;
             }
             if (image_tokens > engine.available_u1_generated_image_tokens()) {
-                throw std::runtime_error("No understanding context remains for another generated image");
+                if (result.images.empty()) {
+                    throw std::runtime_error("No understanding context remains for a generated image");
+                }
+                break;
             }
             engine.append({token});
             context.load_image_engine();
