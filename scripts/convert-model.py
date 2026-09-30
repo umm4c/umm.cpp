@@ -219,8 +219,8 @@ class LoRAAdapter:
     alpha_suffix = ".alpha"
 
     def __init__(self, path: Path, strength: float) -> None:
-        if strength < 0:
-            raise ValueError("LoRA strength must be nonnegative")
+        if not math.isfinite(strength) or strength < 0:
+            raise ValueError("LoRA strength must be finite and nonnegative")
         self.path = path.resolve(strict=True)
         self.strength = strength
         self.targets: dict[str, tuple[str, str, str]] = {}
@@ -266,6 +266,8 @@ class LoRAAdapter:
                 f"down={tuple(down.shape)}, up={tuple(up.shape)}"
             )
         alpha = float(lora_tensors.get_tensor(alpha_name)) if alpha_name in lora_tensors.keys() else down.shape[0]
+        if not math.isfinite(alpha):
+            raise ValueError(f"LoRA alpha must be finite for {name}")
         delta = torch.matmul(up.to(torch.float32), down.to(torch.float32))
         return tensor.to(torch.float32).add_(delta, alpha=self.strength * alpha / down.shape[0])
 
