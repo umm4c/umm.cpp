@@ -104,9 +104,13 @@ using the CANN backend:
 
 ```sh
 docker build -f docker/Dockerfile.cann-mvp -t umm-cann:8.5.0-mvp docker
-cmake -S . -B build-cann -DCMAKE_BUILD_TYPE=Release \
-  -DGGML_CANN=ON -DSOC_TYPE=Ascend310P3
-cmake --build build-cann -j 8
+docker run --rm --security-opt seccomp=unconfined \
+  --user "$(id -u):$(id -g)" -v "$PWD:/workspace/umm" \
+  umm-cann:8.5.0-mvp bash -lc '
+    cmake -S . -B build-cann -DCMAKE_BUILD_TYPE=Release \
+      -DGGML_CANN=ON -DSOC_TYPE=Ascend310P3
+    cmake --build build-cann -j 8
+  '
 ```
 
 ### Prepare a model package
@@ -125,7 +129,7 @@ Convert a checkpoint with:
 ```sh
 # SenseNova U1.5 on Ascend 310P
 python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1 \
-  --outtype f16 --generation-outtype f16
+  --outtype q8_0 --generation-outtype f16
 
 # BAGEL-7B-MoT
 python scripts/convert-model.py /path/to/BAGEL-7B-MoT --output /path/to/bagel
@@ -170,11 +174,26 @@ build/bin/umm-cli --model /path/to/u1 --mode image \
 On one Ascend 310P device, select the same CANN backend for both components:
 
 ```sh
-build-cann/bin/umm-cli --model /path/to/u1 --mode image \
-  --prompt 'a red cube on a white background' --output cube.png \
-  --understanding-backend CANN0 --generation-backend CANN0 \
-  --generation-max-vram 'CANN0=40'
+mkdir -p outputs
+docker run --rm --security-opt seccomp=unconfined \
+  --device /dev/davinci2 --device /dev/davinci_manager \
+  --device /dev/hisi_hdc --device /dev/devmm_svm \
+  -e GGML_SCHED_STRICT_ACCEL=1 \
+  -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
+  -v "$PWD/build-cann/bin:/usr/local/lib/umm:ro" \
+  -v /path/to/u1:/model:ro -v "$PWD/outputs:/output" \
+  umm-cann:8.5.0-mvp bash -lc '
+    export LD_LIBRARY_PATH=/usr/local/lib/umm:${LD_LIBRARY_PATH:-}
+    /usr/local/lib/umm/umm-cli --model /model --mode image \
+      --prompt "a red cube on a white background" --output /output/cube.png \
+      --understanding-backend CANN0 --generation-backend CANN0 \
+      --generation-max-vram CANN0=40
+  '
 ```
+
+Replace `/dev/davinci2` with the physical device to use; it appears as CANN0
+inside the container. The Q8 understanding/F16 generation package above is the
+validated single-card layout.
 
 When both U1.5 components use the same CANN device, UMM uses a 2048-token
 understanding context to keep both sets of weights resident. Image-understanding
