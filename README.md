@@ -79,8 +79,8 @@ The interface provides these modes:
 ## Platform support
 
 Validation in this repository covers Linux with NVIDIA CUDA and Ascend CANN.
-SenseNova U1.5 has been tested on two Ascend 310P3 devices with CANN 8.5.0 at
-2048 x 2048 for 50 Euler steps. All model graph operations run on the NPUs;
+SenseNova U1.5 has been tested on one Ascend 310P3 device with CANN 8.5.0 at
+1024 x 1024 for 50 Euler steps and 2048 x 2048 for 8 steps. Model graph operations run on the NPU;
 CPU handles supporting work such as tokenization, file I/O, and PNG encoding.
 
 ## Quick start
@@ -123,8 +123,9 @@ python -m pip install -r third_party/llama.cpp/requirements/requirements-convert
 Convert a checkpoint with:
 
 ```sh
-# SenseNova U1.5
-python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1
+# SenseNova U1.5 on Ascend 310P
+python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1 \
+  --outtype f16 --generation-outtype f16
 
 # BAGEL-7B-MoT
 python scripts/convert-model.py /path/to/BAGEL-7B-MoT --output /path/to/bagel
@@ -142,10 +143,11 @@ Other package rules:
 
 - Understanding weights default to BF16; use `--outtype f16`, `f32`, or `q8_0`
   to change that component's format.
-- Generation weights retain their source dtype and values. For Ascend 310P, use
-  `--outtype f16 --generation-outtype f32` when converting because its CANN
-  MatMul path does not support BF16 weights. Other backends can preserve the
-  source precision.
+- Generation weights retain their source dtype and values unless
+  `--generation-outtype f16` or `f32` is specified. Ascend 310P needs F16 or
+  F32 weights for its CANN MatMul path; F16 uses less device memory.
+- Reconvert older U1 packages whose `generation.gguf` lacks the four
+  `vision_model.embeddings` tensors. Image understanding requires them.
 - Tokenizer data is embedded in `understanding.gguf`.
 - The converter leaves the source checkpoint untouched, refuses to overwrite an
   existing output directory, and needs enough free space for the completed
@@ -165,15 +167,18 @@ build/bin/umm-cli --model /path/to/u1 --mode image \
   --prompt 'a red cube on a white background' --output cube.png
 ```
 
-On two Ascend 310P devices, select the understanding and generation backends
-and give the layer splitter per-device memory limits:
+On one Ascend 310P device, select the same CANN backend for both components:
 
 ```sh
 build-cann/bin/umm-cli --model /path/to/u1 --mode image \
   --prompt 'a red cube on a white background' --output cube.png \
-  --understanding-backend CANN0 --generation-backend 'CANN0&CANN1' \
-  --generation-max-vram 'CANN0=12,CANN1=38'
+  --understanding-backend CANN0 --generation-backend CANN0 \
+  --generation-max-vram 'CANN0=40'
 ```
+
+When both U1.5 components use the same CANN device, UMM uses a 2048-token
+understanding context to keep both sets of weights resident. Image-understanding
+requests whose input needs more than that context require a larger-memory setup.
 
 ### Reason, then generate an image
 
