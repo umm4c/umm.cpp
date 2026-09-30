@@ -190,7 +190,12 @@ def selected_generation_tensors(
     return selected
 
 
-def write_generation(shards: list[Path], output: Path, architecture: str = "sensenova_u1") -> int:
+def write_generation(
+    shards: list[Path],
+    output: Path,
+    architecture: str = "sensenova_u1",
+    outtype: str | None = None,
+) -> int:
     """Write the generation-only GGUF while streaming source tensors."""
 
     spec = spec_for(architecture)
@@ -206,7 +211,13 @@ def write_generation(shards: list[Path], output: Path, architecture: str = "sens
             with safe_open(shard, framework="pt", device="cpu") as tensors:
                 for name in shard_names:
                     tensor = tensors.get_slice(name)
-                    dtype, ggml_type = tensor_type_info(tensor.get_dtype())
+                    source_type = tensor.get_dtype()
+                    target_type = (
+                        outtype.upper()
+                        if source_type == "BF16" and outtype in ("f16", "f32")
+                        else source_type
+                    )
+                    dtype, ggml_type = tensor_type_info(target_type)
                     shape = tensor.get_shape()
                     writer.add_tensor_info(
                         name,
@@ -224,7 +235,10 @@ def write_generation(shards: list[Path], output: Path, architecture: str = "sens
             with safe_open(shard, framework="pt", device="cpu") as tensors:
                 for name in shard_names:
                     tensor = tensors.get_tensor(name)
-                    data = tensor.view(torch.uint16) if tensor.dtype == torch.bfloat16 else tensor
+                    if tensor.dtype == torch.bfloat16 and outtype in ("f16", "f32"):
+                        data = tensor.to(torch.float16 if outtype == "f16" else torch.float32)
+                    else:
+                        data = tensor.view(torch.uint16) if tensor.dtype == torch.bfloat16 else tensor
                     writer.write_tensor_data(data.numpy())
                     del tensor, data
     finally:
@@ -270,7 +284,7 @@ def build_manifest(spec: ModelSpec) -> dict:
     }
 
 
-def convert(source: Path, output: Path, outtype: str) -> None:
+def convert(source: Path, output: Path, outtype: str, generation_outtype: str | None = None) -> None:
     """Convert a checkpoint into a package using an atomic temporary directory."""
 
     source = source.resolve(strict=True)
@@ -291,7 +305,12 @@ def convert(source: Path, output: Path, outtype: str) -> None:
             "--outtype",
             outtype,
         )
-        tensor_count = write_generation(shards, package / "generation.gguf", spec.architecture)
+        tensor_count = write_generation(
+            shards,
+            package / "generation.gguf",
+            spec.architecture,
+            generation_outtype,
+        )
         manifest = build_manifest(spec)
         if spec.is_bagel:
             copy_bagel_components(source, package, manifest)
@@ -318,13 +337,18 @@ def parse_args() -> argparse.Namespace:
         default="bf16",
         help="Understanding weights format (default: bf16); generation preserves source precision",
     )
+    parser.add_argument(
+        "--generation-outtype",
+        choices=("bf16", "f16", "f32"),
+        help="Convert BF16 generation weights to this format (default: preserve source precision)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     try:
-        convert(args.checkpoint, args.output, args.outtype)
+        convert(args.checkpoint, args.output, args.outtype, args.generation_outtype)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         raise SystemExit(f"umm conversion: {error}")
 

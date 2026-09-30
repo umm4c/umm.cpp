@@ -8,12 +8,18 @@
 #include "stable-diffusion.h"
 #include "sd-cpp-adapter.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <utility>
 
 namespace umm {
 
 namespace {
+
+void log_stable_diffusion(enum sd_log_level_t, const char * message, void *) {
+    std::fputs(message, stderr);
+}
 
 void validate_edit_dimensions(const image_options & options) {
     const bool width_set = options.width != 0;
@@ -26,6 +32,16 @@ void validate_edit_dimensions(const image_options & options) {
 bool has_image_prefix_data(const sd_kv_prefix_t & prefix) {
     return prefix.token_ids && prefix.token_count &&
            prefix.keys && prefix.values && prefix.layer_count;
+}
+
+int context_size_for_single_cann_u1(model_family family, const std::string & understanding_backend,
+                                    const std::string & generation_backend) {
+    if (family != model_family::sensenova_u1 || understanding_backend != generation_backend ||
+        (understanding_backend.rfind("CANN", 0) != 0 && understanding_backend.rfind("cann", 0) != 0)) {
+        return 0;
+    }
+    // Limit the scheduler reservation while both U1.5 GGUFs share one 310P.
+    return 2048;
 }
 
 std::vector<llama_pos> image_prefix_positions(const sd_kv_prefix_t & prefix) {
@@ -50,12 +66,15 @@ struct session::impl {
     llama_cpp_adapter language_model;
     std::unique_ptr<model_workflow> workflow;
     std::string generation_model;
+    std::string generation_backend;
+    std::string generation_max_vram;
     std::string vae_model;
     std::string sd_vision_model;
     std::unique_ptr<sd_cpp_adapter> sd_vision_adapter;
     std::unique_ptr<sd_ctx_t, decltype(&free_sd_ctx)> image_engine{nullptr, free_sd_ctx};
 
-    explicit impl(model_package package_);
+    impl(model_package package_, const std::string & understanding_backend,
+         const std::string & generation_backend_, const std::string & generation_max_vram_);
 
     void load_image_engine();
     void append_image(const image_input & image);
@@ -69,11 +88,16 @@ struct session::impl {
 
 // Model setup ---------------------------------------------------------------
 
-session::impl::impl(model_package package_)
+session::impl::impl(model_package package_, const std::string & understanding_backend,
+                    const std::string & generation_backend_, const std::string & generation_max_vram_)
     : package(std::move(package_)),
-      language_model(package.component("understanding"), 0, 99),
+      language_model(package.component("understanding"),
+                     context_size_for_single_cann_u1(package.family, understanding_backend, generation_backend_),
+                     99, false, understanding_backend),
       workflow(create_model_workflow(language_model.family())),
       generation_model(package.component("generation")),
+      generation_backend(generation_backend_),
+      generation_max_vram(generation_max_vram_),
       vae_model(package.component("vae")),
       sd_vision_model(package.component("vision")) {
     if (package.family != model_family::unknown && package.family != language_model.family()) {
@@ -100,7 +124,13 @@ void session::impl::load_image_engine() {
     params.vae_path = vae_model.empty() ? nullptr : vae_model.c_str();
     params.n_threads = 8;
     params.enable_mmap = true;
-    params.flash_attn = params.diffusion_flash_attn = true;
+    const bool multi_device = generation_backend.find('&') != std::string::npos;
+    const bool disable_flash = std::getenv("UMM_DISABLE_FLASH_ATTN") != nullptr;
+    params.flash_attn = params.diffusion_flash_attn = !disable_flash;
+    params.backend = generation_backend.empty() ? nullptr : generation_backend.c_str();
+    params.params_backend = generation_backend.empty() || multi_device ? nullptr : generation_backend.c_str();
+    params.split_mode = multi_device ? "layer" : nullptr;
+    params.max_vram = generation_max_vram.empty() ? nullptr : generation_max_vram.c_str();
     params.external_kv_prefix = true;
 
     if (language_model.family() == model_family::bagel) {
@@ -193,11 +223,17 @@ workflow_context session::impl::workflow_context_for_request() {
 
 // Public session API --------------------------------------------------------
 
-session::session(const std::string & model, const std::string & generation_model) {
+session::session(const std::string & model,
+                 const std::string & generation_model,
+                 const std::string & understanding_backend,
+                 const std::string & generation_backend,
+                 const std::string & generation_max_vram) {
     auto package = resolve_model(model, generation_model);
     ggml_backend_load_all();
     llama_backend_init();
-    impl_ = std::make_unique<impl>(std::move(package));
+    sd_set_log_callback(log_stable_diffusion, nullptr);
+    impl_ = std::make_unique<impl>(std::move(package), understanding_backend, generation_backend,
+                                  generation_max_vram);
 }
 
 session::~session() = default;

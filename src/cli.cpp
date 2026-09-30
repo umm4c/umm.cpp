@@ -23,6 +23,8 @@ void print_help() {
     std::cout
         << "umm-cli --model PACKAGE --mode text|image|think-image --prompt TEXT\n"
            "        [--output image.png] [--max-tokens 256]\n"
+           "        [--understanding-backend CANN0] [--generation-backend CANN0]\n"
+           "        [--generation-max-vram CANN0=40]\n"
            "        [--width 2048] [--height 2048] [--steps 50] [--cfg 4] [--shift 3] [--seed 42]\n";
 }
 
@@ -43,6 +45,7 @@ option_map parse_arguments(int argc, char ** argv) {
     const std::vector<std::string> known = {
         "--model", "--mode", "--prompt", "--output", "--max-tokens",
         "--width", "--height", "--steps", "--cfg", "--shift", "--seed",
+        "--understanding-backend", "--generation-backend", "--generation-max-vram",
     };
     for (const auto & entry : args) {
         if (std::find(known.begin(), known.end(), entry.first) == known.end()) {
@@ -111,7 +114,8 @@ int run(int argc, char ** argv) {
         throw std::invalid_argument("Mode must be text, image, or think-image");
     }
 
-    umm::session session(model);
+    umm::session session(model, "", value(args, "--understanding-backend"),
+                         value(args, "--generation-backend"), value(args, "--generation-max-vram"));
     if (mode == "text") {
         std::cout << session.text(prompt, std::stoi(value(args, "--max-tokens", "256"))) << '\n';
         return 0;

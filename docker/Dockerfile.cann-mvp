@@ -1,0 +1,7 @@
+FROM quay.io/ascend/cann:8.5.0-310p-openeuler24.03-py3.11
+
+COPY requirements-cann-mvp.txt /tmp/requirements-cann-mvp.txt
+RUN python3 -m pip install --no-cache-dir --progress-bar off \
+    -r /tmp/requirements-cann-mvp.txt
+
+WORKDIR /workspace/umm
