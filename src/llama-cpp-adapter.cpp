@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 namespace umm {
 
@@ -386,20 +387,28 @@ prefix_view llama_cpp_adapter::prefix() const {
 
     const auto device_keys = std::move(result.keys);
     const auto device_values = std::move(result.values);
-    result.host_storage.reserve(2*layers.size());
+    result.host_descriptors.reset(ggml_init({2*layers.size()*ggml_tensor_overhead(), nullptr, true}));
+    if (!result.host_descriptors) {
+        throw std::runtime_error("Could not allocate host prefix descriptors");
+    }
     result.keys.reserve(layers.size());
     result.values.reserve(layers.size());
-    auto stage_to_host = [&](ggml_tensor * source) {
-        auto * host = ggml_dup_tensor(result.descriptors.get(), source);
-        result.host_storage.emplace_back(ggml_nbytes(source));
-        auto & bytes = result.host_storage.back();
-        ggml_backend_tensor_get(source, bytes.data(), 0, bytes.size());
-        host->data = bytes.data();
-        return host;
-    };
     for (size_t i = 0; i < layers.size(); ++i) {
-        result.keys.push_back(stage_to_host(device_keys[i]));
-        result.values.push_back(stage_to_host(device_values[i]));
+        result.keys.push_back(ggml_dup_tensor(result.host_descriptors.get(), device_keys[i]));
+        result.values.push_back(ggml_dup_tensor(result.host_descriptors.get(), device_values[i]));
+    }
+    result.host_buffer.reset(ggml_backend_alloc_ctx_tensors_from_buft(
+        result.host_descriptors.get(), ggml_backend_cpu_buffer_type()));
+    if (!result.host_buffer) {
+        throw std::runtime_error("Could not allocate host prefix buffer");
+    }
+    for (size_t i = 0; i < layers.size(); ++i) {
+        for (const auto pair : {std::pair{device_keys[i], result.keys[i]},
+                                std::pair{device_values[i], result.values[i]}}) {
+            std::vector<uint8_t> bytes(ggml_nbytes(pair.first));
+            ggml_backend_tensor_get(pair.first, bytes.data(), 0, bytes.size());
+            ggml_backend_tensor_set(pair.second, bytes.data(), 0, bytes.size());
+        }
     }
     return result;
 }
