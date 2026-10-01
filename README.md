@@ -63,7 +63,7 @@ The design has three practical properties:
 | Model family | Current support |
 | --- | --- |
 | [SenseNova U1 series](https://github.com/OpenSenseNova/SenseNova-U1) | Initial model family; the current implementation and validation cover the dense SenseNova U1.5 checkpoint |
-| [BAGEL-7B-MoT](https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT) | All seven CLI modes have been validated with F16 weights. Ascend 310P also supports single-card image generation with Q8_0 understanding weights and F16 generation weights. |
+| [BAGEL-7B-MoT](https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT) | F16 text, image generation, and image understanding run on Ascend 310P. The edit modes execute, but generated edits still degrade to noise and are not quality-validated. Single-card image generation works with Q8_0 understanding and F16 generation weights. |
 | Additional model families | Planned; Hunyuan Image is a likely next target |
 
 The interface provides these modes:

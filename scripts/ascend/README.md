@@ -10,6 +10,8 @@ Build this directory in the CANN container before running either script, or
 set `BUILD_DIR` to another build directory. U1.5 supports text, image, and
 interleaved text/image generation. BAGEL understanding and editing require the
 F16 multi-card layout; the Q8 single-card path is for text and image generation.
+F16 edit and think-edit complete the CLI path, but current 256x256 and 512x512
+outputs are noise even with 50 steps at 256x256. Treat editing as experimental.
 
 For example, from the repository root with the CANN container available:
 
@@ -50,7 +52,7 @@ layouts are:
 | Model | Physical devices | Logical layout |
 | --- | --- | --- |
 | BAGEL Q8 understanding + F16 generation | `DEVICES=2` | Text-to-image on CANN0; validated at 1024x1024 with VAE tiling. Q8 understanding/editing remain unvalidated. |
-| BAGEL F16 understanding + F16 generation | `DEVICES=2,3,4` | Previously validated seven-mode layout: LLM/VAE CANN0, diffusion CANN1+CANN2, vision CANN1. Recheck after rebase. |
+| BAGEL F16 understanding + F16 generation | `DEVICES=2,3,4` | LLM/VAE CANN0, diffusion CANN1+CANN2, vision CANN1. Text, generation, and understanding run; editing completes but image quality is not yet usable. |
 | U1.5 Q8 understanding + F16 generation | `DEVICES=2` | LLM and diffusion on CANN0; validated at 2048x2048, 50 steps |
 
 The order in `DEVICES` defines the logical CANN indexes inside the container.
