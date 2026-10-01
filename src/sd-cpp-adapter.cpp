@@ -1,6 +1,7 @@
 #include "sd-cpp-adapter.h"
 
 #include "stable-diffusion.h"
+#include "ggml-backend.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,6 +15,11 @@
 namespace umm {
 
 namespace {
+
+bool is_cann_backend(const std::string & backend) {
+    return backend.size() >= 4 &&
+           (backend.substr(0, 4) == "CANN" || backend.substr(0, 4) == "cann");
+}
 
 // Common image validation and resizing --------------------------------------
 
@@ -97,10 +103,18 @@ image_input prepare_bagel_input(const image_input & image) {
 
 class bagel_sd_cpp_adapter final : public sd_cpp_adapter {
 public:
-    explicit bagel_sd_cpp_adapter(const std::string & path) : context_(nullptr, clip_free) {
+    bagel_sd_cpp_adapter(const std::string & path, const std::string & backend) : context_(nullptr, clip_free) {
         clip_context_params params{};
         params.use_gpu = true;
-        params.flash_attn_type = CLIP_FLASH_ATTN_TYPE_ENABLED;
+        if (!backend.empty()) {
+            params.device = ggml_backend_dev_by_name(backend.c_str());
+            if (!params.device) {
+                throw std::runtime_error("Vision backend was not found: " + backend);
+            }
+        }
+        params.flash_attn_type = is_cann_backend(backend)
+            ? CLIP_FLASH_ATTN_TYPE_DISABLED
+            : CLIP_FLASH_ATTN_TYPE_ENABLED;
         const auto loaded = clip_init(path.c_str(), params);
         context_.reset(loaded.ctx_v);
         clip_free(loaded.ctx_a);
@@ -135,9 +149,10 @@ private:
 
 sd_cpp_adapter::~sd_cpp_adapter() = default;
 
-std::unique_ptr<sd_cpp_adapter> create_sd_cpp_adapter(model_family family, const std::string & path) {
+std::unique_ptr<sd_cpp_adapter> create_sd_cpp_adapter(model_family family, const std::string & path,
+                                                       const std::string & backend) {
     if (family == model_family::bagel) {
-        return std::make_unique<bagel_sd_cpp_adapter>(path);
+        return std::make_unique<bagel_sd_cpp_adapter>(path, backend);
     }
     throw std::runtime_error("The selected model has no sd.cpp vision adapter");
 }

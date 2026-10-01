@@ -16,7 +16,8 @@ namespace umm {
 struct prefix_view {
     std::unique_ptr<ggml_context, decltype(&ggml_free)> descriptors{nullptr, ggml_free};
     std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> storage{nullptr, ggml_backend_buffer_free};
-    std::vector<std::vector<uint8_t>> host_storage;
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> host_descriptors{nullptr, ggml_free};
+    std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> host_buffer{nullptr, ggml_backend_buffer_free};
     std::vector<ggml_tensor *> keys;
     std::vector<ggml_tensor *> values;
 };

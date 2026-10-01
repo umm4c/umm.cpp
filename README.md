@@ -63,7 +63,7 @@ The design has three practical properties:
 | Model family | Current support |
 | --- | --- |
 | [SenseNova U1 series](https://github.com/OpenSenseNova/SenseNova-U1) | Initial model family; the current implementation and validation cover the dense SenseNova U1.5 checkpoint |
-| [BAGEL-7B-MoT](https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT) | Experimental implementation in the development working tree; conversion, CPU handoff tests, graph construction, and a small vision forward pass checked. Full inference and image quality are not yet validated. |
+| [BAGEL-7B-MoT](https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT) | F16 text, image generation, and image understanding run on Ascend 310P. The edit modes execute, but generated edits still degrade to noise and are not quality-validated. Single-card image generation works with Q8_0 understanding and F16 generation weights. |
 | Additional model families | Planned; Hunyuan Image is a likely next target |
 
 The interface provides these modes:
@@ -81,7 +81,11 @@ The interface provides these modes:
 Validation in this repository covers Linux with NVIDIA CUDA and Ascend CANN.
 SenseNova U1.5 has been tested on one Ascend 310P3 device with CANN 8.5.0 at
 1024 x 1024 for 50 Euler steps and 2048 x 2048 for 8 steps. Model graph operations run on the NPU;
-CPU handles supporting work such as tokenization, file I/O, and PNG encoding.
+Ascend 310P also supports BAGEL on a single card with Q8_0 understanding weights
+and F16 generation weights. CPU handles supporting work such as tokenization,
+scheduling, file I/O, and PNG encoding. See
+[`scripts/ascend/README.md`](scripts/ascend/README.md) for the validated Ascend
+layouts and launch scripts.
 
 ## Quick start
 
@@ -274,6 +278,9 @@ Model-specific defaults:
 - U1 image generation defaults to 2048 × 2048, with dimensions divisible by 32.
 - BAGEL image generation defaults to 1024 × 1024, with dimensions divisible by 16
   and a maximum size of 1024 × 1024.
+- `--vae-tiling 1` bounds VAE activation memory by decoding overlapping tiles.
+  `--vae-tile-size` is expressed in latent pixels and `--vae-tile-overlap` is a
+  ratio in `[0, 1)`. This is recommended for 1024 × 1024 BAGEL output.
 - For editing, omitting `--width` and `--height` preserves the prepared input
   dimensions. BAGEL also supports `--image-cfg`, which defaults to 1.5.
 - Text and image modes share the same CLI format. Interleaved generation is

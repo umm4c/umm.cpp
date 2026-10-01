@@ -21,11 +21,14 @@ using option_map = std::map<std::string, std::string>;
 
 void print_help() {
     std::cout
-        << "umm-cli --model PACKAGE --mode text|image|think-image|interleave|think-interleave --prompt TEXT\n"
-           "        [--output image.png] [--max-tokens 256] [--max-images 2]\n"
-           "        [--understanding-backend CANN0] [--generation-backend CANN0]\n"
-           "        [--generation-max-vram CANN0=40]\n"
-           "        [--width 2048] [--height 2048] [--steps 50] [--cfg 4] [--shift 3] [--seed 42]\n"
+        << "umm-cli --model PACKAGE --mode MODE --prompt TEXT\n"
+           "        MODE: text|image|think-image|interleave|think-interleave|understand|think-understand|edit|think-edit\n"
+           "        [--input image.png] [--output image.png] [--max-tokens 256] [--max-images 2]\n"
+           "        [--understanding-backend CANN0] [--vision-backend CANN0]\n"
+           "        [--generation-backend CANN0] [--generation-max-vram CANN0=40]\n"
+           "        [--width MODEL_DEFAULT] [--height MODEL_DEFAULT] [--steps 50]\n"
+           "        [--cfg 4] [--image-cfg 1.5] [--shift 3] [--seed 42]\n"
+           "        [--vae-tiling 0|1] [--vae-tile-size 64] [--vae-tile-overlap 0.5]\n"
            "        (interleave defaults: 512x512, cfg 1)\n";
 }
 
@@ -44,9 +47,10 @@ option_map parse_arguments(int argc, char ** argv) {
     }
 
     const std::vector<std::string> known = {
-        "--model", "--mode", "--prompt", "--output", "--max-tokens", "--max-images",
-        "--width", "--height", "--steps", "--cfg", "--shift", "--seed",
-        "--understanding-backend", "--generation-backend", "--generation-max-vram",
+        "--model", "--mode", "--prompt", "--input", "--output", "--max-tokens", "--max-images",
+        "--width", "--height", "--steps", "--cfg", "--image-cfg", "--shift", "--seed",
+        "--vae-tiling", "--vae-tile-size", "--vae-tile-overlap",
+        "--understanding-backend", "--vision-backend", "--generation-backend", "--generation-max-vram",
     };
     for (const auto & entry : args) {
         if (std::find(known.begin(), known.end(), entry.first) == known.end()) {
@@ -78,12 +82,16 @@ void write_metadata(const std::filesystem::path & output,
     const nlohmann::json metadata = {
         {"mode", mode},
         {"prompt", prompt},
-        {"width", options.width},
-        {"height", options.height},
+        {"width", image.width},
+        {"height", image.height},
         {"steps", options.steps},
         {"guidance", options.guidance},
+        {"image_guidance", options.image_guidance},
         {"flow_shift", options.flow_shift},
         {"seed", options.seed},
+        {"vae_tiling", options.vae_tiling},
+        {"vae_tile_size", options.vae_tile_size},
+        {"vae_tile_overlap", options.vae_tile_overlap},
         {"reasoning", image.reasoning},
         {"reasoning_tokens", image.reasoning_tokens},
         {"prefix_tokens", image.prefix_tokens},
@@ -111,26 +119,64 @@ int run(int argc, char ** argv) {
     }
 
     const auto mode = value(args, "--mode", "text");
-    if (mode != "text" && mode != "image" && mode != "think-image" &&
-        mode != "interleave" && mode != "think-interleave") {
-        throw std::invalid_argument("Unsupported mode");
-    }
+    const std::vector<std::string> modes = {
+        "text", "image", "think-image", "interleave", "think-interleave",
+        "understand", "think-understand", "edit", "think-edit",
+    };
+    if (std::find(modes.begin(), modes.end(), mode) == modes.end())
+        throw std::invalid_argument("Unsupported mode: " + mode);
 
     umm::session session(model, "", value(args, "--understanding-backend"),
-                         value(args, "--generation-backend"), value(args, "--generation-max-vram"));
+                         value(args, "--generation-backend"), value(args, "--generation-max-vram"),
+                         value(args, "--vision-backend"));
     if (mode == "text") {
         std::cout << session.text(prompt, std::stoi(value(args, "--max-tokens", "256"))) << '\n';
         return 0;
     }
 
     const bool interleave_mode = mode == "interleave" || mode == "think-interleave";
+    const bool understanding = mode == "understand" || mode == "think-understand";
+    const bool editing = mode == "edit" || mode == "think-edit";
+    if (understanding || editing) {
+        const auto input = read_image(required(args, "--input"));
+        if (understanding) {
+            std::cout << session.understand(input, prompt,
+                std::stoi(value(args, "--max-tokens", "256")), mode == "think-understand") << '\n';
+            return 0;
+        }
+
+        umm::image_options options;
+        options.width = std::stoi(value(args, "--width", "0"));
+        options.height = std::stoi(value(args, "--height", "0"));
+        options.steps = std::stoi(value(args, "--steps", "50"));
+        options.guidance = std::stof(value(args, "--cfg", "4"));
+        options.image_guidance = std::stof(value(args, "--image-cfg", "1.5"));
+        options.flow_shift = std::stof(value(args, "--shift", "3"));
+        options.seed = std::stoll(value(args, "--seed", "42"));
+        options.vae_tiling = std::stoi(value(args, "--vae-tiling", "0")) != 0;
+        options.vae_tile_size = std::stoi(value(args, "--vae-tile-size", "0"));
+        options.vae_tile_overlap = std::stof(value(args, "--vae-tile-overlap", "0.5"));
+        options.think = mode == "think-edit";
+        options.max_think_tokens = std::stoi(value(args, "--max-tokens", "1024"));
+        const auto image = session.edit(input, prompt, options);
+        const auto output = std::filesystem::path(value(args, "--output", "image.png"));
+        write_png(output, image);
+        write_metadata(output, mode, prompt, options, image);
+        std::cout << image.reasoning << '\n' << output << '\n';
+        return 0;
+    }
+
     umm::image_options options;
-    options.width = std::stoi(value(args, "--width", interleave_mode ? "512" : "2048"));
-    options.height = std::stoi(value(args, "--height", interleave_mode ? "512" : "2048"));
+    options.width = std::stoi(value(args, "--width", interleave_mode ? "512" : "0"));
+    options.height = std::stoi(value(args, "--height", interleave_mode ? "512" : "0"));
     options.steps = std::stoi(value(args, "--steps", "50"));
     options.guidance = std::stof(value(args, "--cfg", interleave_mode ? "1" : "4"));
+    options.image_guidance = std::stof(value(args, "--image-cfg", "1.5"));
     options.flow_shift = std::stof(value(args, "--shift", "3"));
     options.seed = std::stoll(value(args, "--seed", "42"));
+    options.vae_tiling = std::stoi(value(args, "--vae-tiling", "0")) != 0;
+    options.vae_tile_size = std::stoi(value(args, "--vae-tile-size", "0"));
+    options.vae_tile_overlap = std::stof(value(args, "--vae-tile-overlap", "0.5"));
     options.think = mode == "think-image" || mode == "think-interleave";
     options.max_think_tokens = std::stoi(value(args, "--max-tokens", "1024"));
 

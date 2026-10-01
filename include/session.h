@@ -23,6 +23,9 @@ struct image_options {
     float image_guidance = 1.5f;
     float flow_shift = 3.0f;
     int64_t seed = 42;
+    bool vae_tiling = false;
+    int vae_tile_size = 0;  // Latent-space pixels; zero selects sd.cpp's default.
+    float vae_tile_overlap = 0.5f;
     bool think = false;
     int max_think_tokens = 1024;
 };
@@ -48,7 +51,8 @@ public:
             const std::string & generation_model = "",
             const std::string & understanding_backend = "",
             const std::string & generation_backend = "",
-            const std::string & generation_max_vram = "");
+            const std::string & generation_max_vram = "",
+            const std::string & vision_backend = "");
     ~session();
     session(const session &) = delete;
     session & operator=(const session &) = delete;

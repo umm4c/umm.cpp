@@ -68,7 +68,9 @@ image_options normalize_image_options(model_family family, const image_options &
         (descriptor.max_width && options.width > descriptor.max_width) ||
         (descriptor.max_height && options.height > descriptor.max_height) ||
         options.steps < 1 || !std::isfinite(options.guidance) || options.guidance < 1 ||
-        !std::isfinite(options.flow_shift) || options.flow_shift <= 0 || options.max_think_tokens < 1) {
+        !std::isfinite(options.flow_shift) || options.flow_shift <= 0 || options.max_think_tokens < 1 ||
+        options.vae_tile_size < 0 || !std::isfinite(options.vae_tile_overlap) ||
+        options.vae_tile_overlap < 0 || options.vae_tile_overlap >= 1) {
         throw std::invalid_argument("Use valid model dimensions, positive steps/shift, and guidance >= 1");
     }
     if (model_supports(family, model_capability::image_guidance) &&
@@ -97,6 +99,10 @@ image_result render_generated_image(sd_ctx_t * image_engine, const std::string &
     params.sample_params.guidance.txt_cfg = options.guidance;
     if (image_guidance > 0) params.sample_params.guidance.img_cfg = image_guidance;
     params.sample_params.flow_shift = options.flow_shift;
+    params.vae_tiling_params.enabled = options.vae_tiling;
+    params.vae_tiling_params.tile_size_x = options.vae_tile_size;
+    params.vae_tiling_params.tile_size_y = options.vae_tile_size;
+    params.vae_tiling_params.target_overlap = options.vae_tile_overlap;
 
     sd_image_t * images = nullptr;
     int count = 0;
