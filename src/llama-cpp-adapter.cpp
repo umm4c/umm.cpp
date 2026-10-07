@@ -16,7 +16,8 @@ namespace umm {
 // Model/context setup -------------------------------------------------------
 
 llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context_size, int gpu_layers,
-                                     bool full_precision, const std::string & backend) {
+                                     bool full_precision, const std::string & backend,
+                                     int batch_size, int microbatch_size) {
     auto mp = llama_model_default_params();
     mp.n_gpu_layers = gpu_layers;
     ggml_backend_dev_t devices[2]{};
@@ -52,13 +53,14 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
     const auto & descriptor = model_descriptor_for(family_);
     auto cp = llama_context_default_params();
     if (context_size < 0) throw std::invalid_argument("Context size must be nonnegative");
+    if (batch_size < 0 || microbatch_size < 0) throw std::invalid_argument("Batch sizes must be nonnegative");
     const bool compact_bagel = family_ == model_family::bagel &&
         llama_model_ftype(model_.get()) != LLAMA_FTYPE_MOSTLY_F16;
     cp.n_ctx = context_size ? context_size : descriptor.context_size;
-    cp.n_batch = std::min<uint32_t>(cp.n_ctx, compact_bagel ? 512 : descriptor.batch_size);
-    cp.n_ubatch = compact_bagel
-        ? std::min<uint32_t>(cp.n_batch, 256)
-        : cp.n_batch;
+    cp.n_batch = std::min<uint32_t>(cp.n_ctx, batch_size ? batch_size :
+                                    (compact_bagel ? 512 : descriptor.batch_size));
+    cp.n_ubatch = std::min<uint32_t>(cp.n_batch, microbatch_size ? microbatch_size :
+                                     (compact_bagel ? 256 : cp.n_batch));
     cp.n_seq_max = 1;
     cp.n_threads = 8;
     cp.n_threads_batch = 8;

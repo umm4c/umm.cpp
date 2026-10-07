@@ -52,7 +52,8 @@ public:
             const std::string & understanding_backend = "",
             const std::string & generation_backend = "",
             const std::string & generation_max_vram = "",
-            const std::string & vision_backend = "");
+            const std::string & vision_backend = "",
+            int context_size = 0, int batch_size = 0, int microbatch_size = 0);
     ~session();
     session(const session &) = delete;
     session & operator=(const session &) = delete;

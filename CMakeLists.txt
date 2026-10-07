@@ -49,3 +49,10 @@ target_include_directories(umm-cli PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"
 )
 target_link_libraries(umm-cli PRIVATE umm)
+
+# Persistent, structured interface for serial benchmark replay.
+add_executable(umm-session src/bench-session.cpp src/image-io.cpp)
+target_include_directories(umm-session PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"
+)
+target_link_libraries(umm-session PRIVATE umm)
