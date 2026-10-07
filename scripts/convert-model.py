@@ -45,6 +45,9 @@ U1_SPEC = ModelSpec(
     required_generation_tensors=frozenset({
         "language_model.model.layers.0.self_attn.q_proj_mot_gen.weight",
         "vision_model.embeddings.patch_embedding.weight",
+        "vision_model.embeddings.patch_embedding.bias",
+        "vision_model.embeddings.dense_embedding.weight",
+        "vision_model.embeddings.dense_embedding.bias",
         "fm_modules.vision_model_mot_gen.embeddings.patch_embedding.weight",
         "fm_modules.fm_head.conv1.weight",
     }),

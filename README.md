@@ -135,6 +135,10 @@ Convert a checkpoint with:
 python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1 \
   --outtype q8_0 --generation-outtype f16
 
+# Ascend 310P: Q8 understanding and FP16 generation, including image understanding weights
+python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1-310p \
+  --outtype q8_0 --generation-outtype f16
+
 # BAGEL-7B-MoT
 python scripts/convert-model.py /path/to/BAGEL-7B-MoT --output /path/to/bagel
 ```
