@@ -69,9 +69,36 @@ void send(FILE * protocol, const json & message) {
     }
 }
 
+json available(double value) { return value < 0 ? json(nullptr) : json(value); }
+json available(int64_t value) { return value < 0 ? json(nullptr) : json(value); }
+
+json timings(const umm::request_metrics & metrics, clock_type::time_point start) {
+    return {{"end_to_end", elapsed_ms(start)},
+            {"image_decode", available(metrics.image_decode_ms)},
+            {"input_preprocess", available(metrics.input_preprocess_ms)},
+            {"generation_model_load", available(metrics.generation_model_load_ms)},
+            {"vision_model_load", available(metrics.vision_model_load_ms)},
+            {"vision_encode", available(metrics.vision_encode_ms)},
+            {"text_prefill", available(metrics.text_prefill_ms)},
+            {"text_decode", available(metrics.text_decode_ms)},
+            {"ttft", available(metrics.ttft_ms)},
+            {"conditioning", available(metrics.conditioning_ms)},
+            {"diffusion_steps", available(metrics.diffusion_steps_ms)},
+            {"diffusion_step", metrics.diffusion_step_ms.empty() ? json(nullptr) : json(metrics.diffusion_step_ms)},
+            {"vae_decode", available(metrics.vae_decode_ms)},
+            {"image_write", available(metrics.image_write_ms)}};
+}
+
+json token_counts(const umm::request_metrics & metrics) {
+    return {{"input", available(metrics.input_tokens)},
+            {"vision", metrics.vision_encode_ms < 0 ? json(nullptr) : json(metrics.vision_tokens)},
+            {"output", available(metrics.output_tokens)}};
+}
+
 json run_case(umm::session & session, const json & request,
               const std::map<std::string, std::string> & options) {
     const auto start = clock_type::now();
+    umm::request_metrics metrics;
     std::string case_id;
     try {
         case_id = required<std::string>(request, "case_id");
@@ -107,17 +134,19 @@ json run_case(umm::session & session, const json & request,
             if (image_count != 1 || image_position != 0) {
                 return {{"type", "result"}, {"case_id", case_id}, {"status", "error"},
                         {"error", {{"code", "unsupported_input_format"}, {"message", "Exactly one leading image is supported"}}},
-                        {"timings_ms", {{"end_to_end", elapsed_ms(start)}}}};
+                        {"timings_ms", timings(metrics, start)}, {"token_counts", token_counts(metrics)}};
             }
             const int max_tokens = required<int>(params, "max_new_tokens");
             if (max_tokens <= 0) throw std::invalid_argument("max_new_tokens must be positive");
+            const auto decode_start = clock_type::now();
             const auto image = umm::cli::read_image(image_path);
-            output = {{"type", "text"}, {"text", session.understand(image, prompt, max_tokens)}};
+            metrics.image_decode_ms = elapsed_ms(decode_start);
+            output = {{"type", "text"}, {"text", session.understand(image, prompt, max_tokens, false, &metrics)}};
         } else if (task == "image_generation") {
             if (image_count != 0) {
                 return {{"type", "result"}, {"case_id", case_id}, {"status", "error"},
                         {"error", {{"code", "unsupported_input_format"}, {"message", "Image generation expects text only"}}},
-                        {"timings_ms", {{"end_to_end", elapsed_ms(start)}}}};
+                        {"timings_ms", timings(metrics, start)}, {"token_counts", token_counts(metrics)}};
             }
             umm::image_options image_options;
             image_options.width = required<int>(params, "width");
@@ -137,27 +166,30 @@ json run_case(umm::session & session, const json & request,
             if (!output_path.is_absolute() || output_path.extension() != ".png") {
                 throw std::invalid_argument("output_path must be an absolute PNG path");
             }
-            const auto image = session.image(prompt, image_options);
+            const auto image = session.image(prompt, image_options, &metrics);
             std::filesystem::create_directories(output_path.parent_path());
+            const auto write_start = clock_type::now();
             umm::cli::write_png(output_path, image);
             std::filesystem::permissions(output_path,
                 std::filesystem::perms::group_read | std::filesystem::perms::others_read,
                 std::filesystem::perm_options::add);
+            metrics.image_write_ms = elapsed_ms(write_start);
             output = {{"type", "image"}, {"path", output_path.string()},
                       {"width", image.width}, {"height", image.height}};
         } else if (task == "multimodal_prefill") {
             return {{"type", "result"}, {"case_id", case_id}, {"status", "error"},
                     {"error", {{"code", "unsupported_input_format"}, {"message", "Multimodal prefill is not supported by this session interface"}}},
-                    {"timings_ms", {{"end_to_end", elapsed_ms(start)}}}};
+                    {"timings_ms", timings(metrics, start)}, {"token_counts", token_counts(metrics)}};
         } else {
             throw std::invalid_argument("Unknown task_class: " + task);
         }
         return {{"type", "result"}, {"case_id", case_id}, {"status", "ok"},
-                {"output", output}, {"timings_ms", {{"end_to_end", elapsed_ms(start)}}}};
+                {"output", output}, {"timings_ms", timings(metrics, start)},
+                {"token_counts", token_counts(metrics)}};
     } catch (const std::exception & error) {
         return {{"type", "result"}, {"case_id", case_id}, {"status", "error"},
                 {"error", {{"code", "request_failed"}, {"message", error.what()}}},
-                {"timings_ms", {{"end_to_end", elapsed_ms(start)}}}};
+                {"timings_ms", timings(metrics, start)}, {"token_counts", token_counts(metrics)}};
     }
 }
 
@@ -175,6 +207,7 @@ int main(int argc, char ** argv) {
         if (!std::filesystem::is_directory(model)) {
             throw std::invalid_argument("--model must name a model package directory");
         }
+        const auto startup_start = clock_type::now();
         umm::session session(model, "", option(options, "--understanding-backend"),
                              option(options, "--generation-backend"),
                              option(options, "--generation-max-vram"), option(options, "--vision-backend"),
@@ -182,6 +215,7 @@ int main(int argc, char ** argv) {
                              std::stoi(option(options, "--n-batch", "0")),
                              std::stoi(option(options, "--n-ubatch", "0")));
         json ready = {{"type", "ready"}, {"protocol", "umm-session/v1"},
+                      {"cold_start_ms", elapsed_ms(startup_start)},
                       {"model", model}, {"options", options}};
         if (const char * model_hash = std::getenv("UMM_MODEL_MANIFEST_SHA256")) {
             ready["model_manifest_sha256"] = model_hash;

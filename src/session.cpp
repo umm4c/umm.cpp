@@ -10,6 +10,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <utility>
 
@@ -17,8 +18,27 @@ namespace umm {
 
 namespace {
 
+thread_local request_metrics * active_log_metrics = nullptr;
+
+struct active_metric_scope {
+    request_metrics *& slot;
+    request_metrics * previous;
+    active_metric_scope(request_metrics *& slot_, request_metrics * current)
+        : slot(slot_), previous(slot_) { slot = current; }
+    ~active_metric_scope() { slot = previous; }
+};
+
 void log_stable_diffusion(enum sd_log_level_t, const char * message, void *) {
     std::fputs(message, stderr);
+    if (active_log_metrics) {
+        const char * marker = std::strstr(message, "decode_first_stage completed, taking ");
+        double seconds = 0;
+        if (marker && std::sscanf(marker, "decode_first_stage completed, taking %lfs", &seconds) == 1 &&
+            seconds >= 0) {
+            if (active_log_metrics->vae_decode_ms < 0) active_log_metrics->vae_decode_ms = 0;
+            active_log_metrics->vae_decode_ms += seconds * 1000;
+        }
+    }
 }
 
 void validate_edit_dimensions(const image_options & options) {
@@ -109,6 +129,7 @@ struct session::impl {
     std::string sd_vision_model;
     std::unique_ptr<sd_cpp_adapter> sd_vision_adapter;
     std::unique_ptr<sd_ctx_t, decltype(&free_sd_ctx)> image_engine{nullptr, free_sd_ctx};
+    request_metrics * active_metrics = nullptr;
 
     impl(model_package package_, const std::string & understanding_backend,
          const std::string & generation_backend_, const std::string & generation_max_vram_,
@@ -182,10 +203,12 @@ void session::impl::load_image_engine() {
         params.llm_path = package.component("understanding").c_str();
     }
 
+    const auto start = metrics_clock::now();
     image_engine.reset(new_sd_ctx(&params));
     if (!image_engine) {
         throw std::runtime_error("Could not load generation checkpoint");
     }
+    if (active_metrics) active_metrics->generation_model_load_ms = metrics_elapsed_ms(start);
 }
 
 void session::impl::append_image(const image_input & image) {
@@ -200,11 +223,17 @@ void session::impl::append_image(const image_input & image) {
 
 void session::impl::append_native_image(const image_input & image) {
     load_image_engine();
+    const auto start = metrics_clock::now();
+    const auto before = language_model.tokens().size();
     const auto stride = model_descriptor_for(model_family::sensenova_u1).image_stride;
     language_model.append_u1_image_embeddings(
         encode_u1_image_with_diffusion(image_engine.get(), image),
         image.width / stride,
         image.height / stride);
+    if (active_metrics) {
+        active_metrics->vision_encode_ms = metrics_elapsed_ms(start);
+        active_metrics->vision_tokens += language_model.tokens().size() - before;
+    }
 }
 
 void session::impl::append_vision_image(const image_input & image) {
@@ -213,9 +242,17 @@ void session::impl::append_vision_image(const image_input & image) {
         throw std::runtime_error("Image understanding requires a model package with vision weights");
     }
     if (!sd_vision_adapter) {
+        const auto load_start = metrics_clock::now();
         sd_vision_adapter = create_sd_cpp_adapter(language_model.family(), sd_vision_model, vision_backend);
+        if (active_metrics) active_metrics->vision_model_load_ms = metrics_elapsed_ms(load_start);
     }
+    const auto start = metrics_clock::now();
+    const auto before = language_model.tokens().size();
     language_model.append_bagel_image_embeddings(sd_vision_adapter->encode(image));
+    if (active_metrics) {
+        active_metrics->vision_encode_ms = metrics_elapsed_ms(start);
+        active_metrics->vision_tokens += language_model.tokens().size() - before;
+    }
 }
 
 void session::impl::transfer_prefix(conditioning_slot slot) {
@@ -256,6 +293,7 @@ void session::impl::import_image_prefix(const sd_kv_prefix_t & prefix) {
 
 workflow_context session::impl::workflow_context_for_request() {
     workflow_context context{language_model};
+    context.metrics = active_metrics;
     context.load_image_engine = [this] { load_image_engine(); };
     context.image_engine = [this] { return image_engine.get(); };
     context.transfer_prefix = [this](conditioning_slot slot) { transfer_prefix(slot); };
@@ -318,21 +356,29 @@ std::string session::text(const std::string & prompt, int max_tokens) {
 }
 
 std::string session::understand(const image_input & image, const std::string & prompt,
-                                int max_tokens, bool think) {
+                                int max_tokens, bool think, request_metrics * metrics) {
     if (!supports(model_capability::understand)) {
         throw std::invalid_argument("Image understanding is not supported by the selected model");
     }
 
+    active_metric_scope binding(impl_->active_metrics, metrics);
+    const auto preprocess_start = metrics_clock::now();
     const auto prepared = prepare_image_input(impl_->language_model.family(), image);
+    if (metrics) metrics->input_preprocess_ms = metrics_elapsed_ms(preprocess_start);
+    if (metrics) metrics->inference_start = metrics_clock::now();
     auto context = impl_->workflow_context_for_request();
     return impl_->workflow->understand(context, prepared, prompt, max_tokens, think);
 }
 
-image_result session::image(const std::string & prompt, const image_options & options) {
+image_result session::image(const std::string & prompt, const image_options & options,
+                            request_metrics * metrics) {
     if (!supports(model_capability::image)) {
         throw std::invalid_argument("Image generation is not supported by the selected model");
     }
 
+    active_metric_scope binding(impl_->active_metrics, metrics);
+    active_metric_scope log_binding(active_log_metrics, metrics);
+    if (metrics) metrics->inference_start = metrics_clock::now();
     auto context = impl_->workflow_context_for_request();
     return impl_->workflow->generate(context, prompt, options, nullptr);
 }

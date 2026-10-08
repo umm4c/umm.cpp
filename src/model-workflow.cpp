@@ -4,7 +4,9 @@
 #include "sd-cpp-adapter.h"
 #include "stable-diffusion.h"
 
+#include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -12,6 +14,73 @@
 namespace umm {
 
 namespace {
+
+void begin_text_decode(workflow_context & context) {
+    auto * metrics = context.metrics;
+    if (!metrics) return;
+    context.language_model.synchronize();
+    const auto now = metrics_clock::now();
+    double prefill = std::chrono::duration<double, std::milli>(now - metrics->inference_start).count();
+    for (double excluded : {metrics->vision_encode_ms, metrics->vision_model_load_ms,
+                            metrics->generation_model_load_ms}) {
+        if (excluded >= 0) prefill -= excluded;
+    }
+    metrics->text_prefill_ms = std::max(0.0, prefill);
+    metrics->input_tokens = context.language_model.tokens().size();
+    metrics->output_tokens = 0;
+    metrics->decode_start = now;
+}
+
+void note_text_token(workflow_context & context, bool end) {
+    auto * metrics = context.metrics;
+    if (!metrics || end) return;
+    if (metrics->ttft_ms < 0) metrics->ttft_ms = metrics_elapsed_ms(metrics->request_start);
+    ++metrics->output_tokens;
+}
+
+void finish_text_decode(workflow_context & context) {
+    if (context.metrics) {
+        context.language_model.synchronize();
+        context.metrics->text_decode_ms = metrics_elapsed_ms(context.metrics->decode_start);
+    }
+}
+
+void finish_conditioning(workflow_context & context, size_t input_tokens) {
+    auto * metrics = context.metrics;
+    if (!metrics) return;
+    double duration = metrics_elapsed_ms(metrics->inference_start);
+    for (double excluded : {metrics->generation_model_load_ms, metrics->vision_model_load_ms,
+                            metrics->vision_encode_ms}) {
+        if (excluded >= 0) duration -= excluded;
+    }
+    metrics->conditioning_ms = std::max(0.0, duration);
+    metrics->input_tokens = input_tokens;
+}
+
+struct progress_data {
+    request_metrics * metrics;
+    int expected_steps;
+};
+
+void diffusion_progress(int step, int steps, float seconds, void * data) {
+    auto * progress = static_cast<progress_data *>(data);
+    const int next_step = static_cast<int>(progress->metrics->diffusion_step_ms.size()) + 1;
+    if (steps == progress->expected_steps && step == next_step &&
+        std::isfinite(seconds) && seconds >= 0) {
+        progress->metrics->diffusion_step_ms.push_back(seconds * 1000.0);
+        if (step == steps) sd_set_progress_callback(nullptr, nullptr);
+    }
+}
+
+struct progress_scope {
+    explicit progress_scope(request_metrics * metrics, int steps)
+        : data{metrics, steps}, enabled(metrics != nullptr) {
+        if (enabled) sd_set_progress_callback(diffusion_progress, &data);
+    }
+    ~progress_scope() { if (enabled) sd_set_progress_callback(nullptr, nullptr); }
+    progress_data data;
+    bool enabled;
+};
 
 // SenseNova U1 prompt grammar ------------------------------------------------
 
@@ -83,7 +152,7 @@ image_options normalize_image_options(model_family family, const image_options &
 // Shared diffusion submission and output validation.
 image_result render_generated_image(sd_ctx_t * image_engine, const std::string & prompt,
                                     const image_options & options, float image_guidance,
-                                    image_result result) {
+                                    image_result result, request_metrics * metrics = nullptr) {
 
     sd_img_gen_params_t params;
     sd_img_gen_params_init(&params);
@@ -106,7 +175,12 @@ image_result render_generated_image(sd_ctx_t * image_engine, const std::string &
 
     sd_image_t * images = nullptr;
     int count = 0;
+    progress_scope progress(metrics, options.steps);
     const bool success = generate_image(image_engine, &params, &images, &count);
+    if (metrics && !metrics->diffusion_step_ms.empty()) {
+        metrics->diffusion_steps_ms = std::accumulate(metrics->diffusion_step_ms.begin(),
+                                                     metrics->diffusion_step_ms.end(), 0.0);
+    }
     if (!success || count != 1 || !images || !images[0].data || images[0].channel != 3 ||
         images[0].width != uint32_t(result.width) || images[0].height != uint32_t(result.height)) {
         free_sd_images(images, count);
@@ -150,12 +224,14 @@ void decode_u1_reasoning(llama_cpp_adapter & engine, image_result & result, int 
 
 // BAGEL's understanding path can include <think>...</think>; only return the
 // answer text when reasoning is enabled.
-std::string decode_bagel_answer(llama_cpp_adapter & engine, int max_tokens, bool think) {
+std::string decode_bagel_answer(workflow_context & context, int max_tokens, bool think) {
+    auto & engine = context.language_model;
     std::string result;
     bool in_reasoning = false;
     for (int i = 0; i < max_tokens; ++i) {
         const auto token = engine.greedy();
         const auto piece = engine.piece(token);
+        note_text_token(context, engine.is_end(token));
         if (piece == "<think>") {
             in_reasoning = true;
         } else if (piece == "</think>") {
@@ -222,9 +298,11 @@ public:
         engine.append(engine.tokenize("\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"));
         if (think) {
             engine.append(engine.tokenize("<think>\n"));
+            begin_text_decode(context);
             for (int i = 0; i < max_tokens; ++i) {
                 const auto token = engine.greedy();
                 const auto piece = engine.piece(token);
+                note_text_token(context, engine.is_end(token));
                 if (engine.is_end(token) || piece == "</think>") {
                     break;
                 }
@@ -233,16 +311,19 @@ public:
             engine.append(engine.tokenize("\n\n"));
         } else {
             engine.append(engine.tokenize("<think>\n\n</think>\n\n"));
+            begin_text_decode(context);
         }
         std::string result;
         for (int i = 0; i < max_tokens; ++i) {
             const auto token = engine.greedy();
+            note_text_token(context, engine.is_end(token));
             if (engine.is_end(token)) {
                 break;
             }
             result += engine.piece(token);
             engine.append({token});
         }
+        finish_text_decode(context);
         return result;
     }
 
@@ -300,10 +381,11 @@ public:
             context.transfer_prefix(conditioning_slot::without_image);
         }
 
+        finish_conditioning(context, result.prefix_tokens.size());
         return render_generated_image(
             context.image_engine(), prompt, options,
             input && options.guidance > 1 ? options.image_guidance : 0.f,
-            std::move(result));
+            std::move(result), context.metrics);
     }
 
     interleave_result interleave(workflow_context & context, const std::string & prompt,
@@ -390,7 +472,10 @@ public:
         if (think) engine.append(engine.tokenize(bagel_reasoning_prompt(false)));
         context.append_vision_image(image);
         engine.append(engine.tokenize("<|im_start|>" + prompt + "<|im_end|><|im_start|>"));
-        return decode_bagel_answer(engine, max_tokens, think);
+        begin_text_decode(context);
+        auto answer = decode_bagel_answer(context, max_tokens, think);
+        finish_text_decode(context);
+        return answer;
     }
 
     image_result generate(workflow_context & context, const std::string & prompt,
@@ -437,8 +522,9 @@ public:
         }
 
         const float image_guidance = input && options.guidance > 1 ? options.image_guidance : 1.f;
+        finish_conditioning(context, result.prefix_tokens.size());
         return render_generated_image(context.image_engine(), prompt, options,
-                                      image_guidance, std::move(result));
+                                      image_guidance, std::move(result), context.metrics);
     }
 };
 

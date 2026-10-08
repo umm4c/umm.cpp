@@ -19,6 +19,7 @@ struct workflow_context {
     // session::impl.
     // The llama.cpp adapter is the language-model side of the workflow.
     llama_cpp_adapter & language_model;
+    request_metrics * metrics = nullptr;
     std::function<void()> load_image_engine;
     std::function<sd_ctx_t *()> image_engine;
     std::function<void(conditioning_slot)> transfer_prefix;

@@ -33,6 +33,7 @@ public:
     std::string piece(llama_token token) const;
     bool is_end(llama_token token) const;
     void reset();
+    void synchronize();
     void append(const std::vector<llama_token> & tokens);
     // BAGEL supplies a flat sequence of vision embeddings.
     void append_bagel_image_embeddings(const std::vector<float> & embeddings);
