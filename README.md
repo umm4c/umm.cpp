@@ -305,10 +305,10 @@ build/bin/umm-session --model /path/to/package --understanding-backend CANN0 \
 {"case_id":"example-1","task_class":"image_generation","content":[{"type":"text","value":"A red cube"}],"params":{"width":1024,"height":1024,"seed":7},"output_path":"/absolute/path/cube.png"}
 ```
 
-`mixed_understanding` accepts one image item with an absolute `path`, a text
-item, and `params.max_new_tokens`. Unsupported inputs return a per-case error;
-model loading errors return `fatal`. Diffusion settings such as `--steps`,
-`--cfg`, and `--shift` are session flags.
+`mixed_understanding` accepts one leading image item with an absolute `path`,
+followed by text items, plus `params.max_new_tokens`. Unsupported inputs return
+a per-case error; model loading errors return `fatal`. Diffusion settings such
+as `--steps`, `--cfg`, and `--shift` are session flags.
 
 ## C++ API
 
