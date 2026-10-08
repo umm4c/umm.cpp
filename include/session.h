@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model-registry.h"
+#include "request-metrics.h"
 
 #include <cstdint>
 #include <memory>
@@ -61,8 +62,9 @@ public:
     bool supports(model_capability capability) const;
     std::string text(const std::string & prompt, int max_tokens = 256);
     std::string understand(const image_input & image, const std::string & prompt,
-                           int max_tokens = 256, bool think = false);
-    image_result image(const std::string & prompt, const image_options & options = {});
+                           int max_tokens = 256, bool think = false, request_metrics * metrics = nullptr);
+    image_result image(const std::string & prompt, const image_options & options = {},
+                       request_metrics * metrics = nullptr);
     image_result edit(const image_input & image, const std::string & prompt, const image_options & options = {});
     interleave_result interleave(const std::string & prompt,
                                  const image_options & options = image_options{512, 512, 50, 1.0f},

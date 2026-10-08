@@ -118,6 +118,10 @@ void llama_cpp_adapter::reset() {
     has_logits_ = false;
 }
 
+void llama_cpp_adapter::synchronize() {
+    llama_synchronize(context_.get());
+}
+
 void llama_cpp_adapter::append(const std::vector<llama_token> & tokens) {
     if (tokens_.size() + tokens.size() > llama_n_ctx(context_.get())) {
         throw std::runtime_error("Understanding context is full");
