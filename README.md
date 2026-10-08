@@ -135,6 +135,10 @@ Convert a checkpoint with:
 python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1 \
   --outtype q8_0 --generation-outtype f16
 
+# Ascend 310P: Q8 understanding and FP16 generation, including image understanding weights
+python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1-310p \
+  --outtype q8_0 --generation-outtype f16
+
 # BAGEL-7B-MoT
 python scripts/convert-model.py /path/to/BAGEL-7B-MoT --output /path/to/bagel
 ```
@@ -285,6 +289,26 @@ Model-specific defaults:
   dimensions. BAGEL also supports `--image-cfg`, which defaults to 1.5.
 - Text and image modes share the same CLI format. Interleaved generation is
   currently specific to SenseNova U1.5.
+
+### Persistent structured session
+
+`umm-session` loads a model package once and exchanges newline-delimited JSON on
+stdin/stdout (`umm-session/v1`). It sends a `ready` record, then one `result`
+per request. Backend logs go to stderr. For example:
+
+```sh
+build/bin/umm-session --model /path/to/package --understanding-backend CANN0 \
+  --generation-backend CANN0 --n-ctx 2048 --n-batch 512 --n-ubatch 256
+```
+
+```json
+{"case_id":"example-1","task_class":"image_generation","content":[{"type":"text","value":"A red cube"}],"params":{"width":1024,"height":1024,"seed":7},"output_path":"/absolute/path/cube.png"}
+```
+
+`mixed_understanding` accepts one leading image item with an absolute `path`,
+followed by text items, plus `params.max_new_tokens`. Unsupported inputs return
+a per-case error; model loading errors return `fatal`. Diffusion settings such
+as `--steps`, `--cfg`, and `--shift` are session flags.
 
 ## C++ API
 

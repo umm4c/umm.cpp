@@ -231,6 +231,8 @@ public:
                 engine.append({token});
             }
             engine.append(engine.tokenize("\n\n"));
+        } else {
+            engine.append(engine.tokenize("<think>\n\n</think>\n\n"));
         }
         std::string result;
         for (int i = 0; i < max_tokens; ++i) {
