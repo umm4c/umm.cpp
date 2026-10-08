@@ -84,6 +84,8 @@ json run_case(umm::session & session, const json & request,
         std::string prompt;
         std::string image_path;
         int image_count = 0;
+        int image_position = -1;
+        int content_position = 0;
         for (const auto & item : content) {
             const auto type = required<std::string>(item, "type");
             if (type == "text") {
@@ -91,18 +93,20 @@ json run_case(umm::session & session, const json & request,
             } else if (type == "image") {
                 image_path = required<std::string>(item, "path");
                 ++image_count;
+                image_position = content_position;
             } else {
                 throw std::invalid_argument("Unknown content type: " + type);
             }
+            ++content_position;
         }
         if (prompt.empty()) {
             throw std::invalid_argument("Text prompt is empty");
         }
         json output;
         if (task == "mixed_understanding") {
-            if (image_count != 1) {
+            if (image_count != 1 || image_position != 0) {
                 return {{"type", "result"}, {"case_id", case_id}, {"status", "error"},
-                        {"error", {{"code", "unsupported_input_format"}, {"message", "Exactly one image is supported"}}},
+                        {"error", {{"code", "unsupported_input_format"}, {"message", "Exactly one leading image is supported"}}},
                         {"timings_ms", {{"end_to_end", elapsed_ms(start)}}}};
             }
             const int max_tokens = required<int>(params, "max_new_tokens");
