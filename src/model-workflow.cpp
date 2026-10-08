@@ -33,9 +33,9 @@ void begin_text_decode(workflow_context & context) {
 
 void note_text_token(workflow_context & context, bool end) {
     auto * metrics = context.metrics;
-    if (!metrics) return;
+    if (!metrics || end) return;
     if (metrics->ttft_ms < 0) metrics->ttft_ms = metrics_elapsed_ms(metrics->request_start);
-    if (!end) ++metrics->output_tokens;
+    ++metrics->output_tokens;
 }
 
 void finish_text_decode(workflow_context & context) {
@@ -64,9 +64,11 @@ struct progress_data {
 
 void diffusion_progress(int step, int steps, float seconds, void * data) {
     auto * progress = static_cast<progress_data *>(data);
-    if (steps == progress->expected_steps && step > 0 && step <= steps &&
+    const int next_step = static_cast<int>(progress->metrics->diffusion_step_ms.size()) + 1;
+    if (steps == progress->expected_steps && step == next_step &&
         std::isfinite(seconds) && seconds >= 0) {
         progress->metrics->diffusion_step_ms.push_back(seconds * 1000.0);
+        if (step == steps) sd_set_progress_callback(nullptr, nullptr);
     }
 }
 
@@ -294,9 +296,9 @@ public:
         engine.append(engine.tokenize("<|im_start|>user\n"));
         context.append_vision_image(image);
         engine.append(engine.tokenize("\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"));
-        begin_text_decode(context);
         if (think) {
             engine.append(engine.tokenize("<think>\n"));
+            begin_text_decode(context);
             for (int i = 0; i < max_tokens; ++i) {
                 const auto token = engine.greedy();
                 const auto piece = engine.piece(token);
@@ -309,6 +311,7 @@ public:
             engine.append(engine.tokenize("\n\n"));
         } else {
             engine.append(engine.tokenize("<think>\n\n</think>\n\n"));
+            begin_text_decode(context);
         }
         std::string result;
         for (int i = 0; i < max_tokens; ++i) {
