@@ -9,7 +9,7 @@ if [[ ${1:-} == --help || ${1:-} == -h ]]; then
     cat <<'EOF'
 Usage: bench-u15.sh [MODE] [PROMPT]
 
-Defaults: image, 256x256, 8 steps, CFG 4, 1 warmup, 3 measured runs.
+Defaults: U1.5 LoRA V2 image, 1024x1024, 8 steps, CFG 1, 1 warmup, 3 measured runs.
 Set REPEATS, WARMUP, BENCH_DIR or any run-u15.sh environment override.
 Each measured run is a fresh process and includes model loading.
 EOF
@@ -22,7 +22,7 @@ input=${3:-${INPUT:-}}
 if [[ ${mode} == interleave || ${mode} == think-interleave ]]; then
     export WIDTH=${WIDTH:-512} HEIGHT=${HEIGHT:-512} STEPS=${STEPS:-8} CFG=${CFG:-1}
 else
-    export WIDTH=${WIDTH:-256} HEIGHT=${HEIGHT:-256} STEPS=${STEPS:-8} CFG=${CFG:-4}
+    export WIDTH=${WIDTH:-1024} HEIGHT=${HEIGHT:-1024} STEPS=${STEPS:-8} CFG=${CFG:-1}
 fi
 ascend_validate_mode "${mode}"
 ascend_benchmark u15 "${script_dir}/run-u15.sh" "${mode}" "${prompt}" "${input}"

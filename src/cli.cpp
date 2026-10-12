@@ -26,6 +26,7 @@ void print_help() {
            "        [--input image.png] [--output image.png] [--max-tokens 256] [--max-images 2]\n"
            "        [--understanding-backend CANN0] [--vision-backend CANN0]\n"
            "        [--generation-backend CANN0] [--generation-max-vram CANN0=40]\n"
+           "        [--n-ctx MODEL_DEFAULT] [--n-batch MODEL_DEFAULT] [--n-ubatch MODEL_DEFAULT]\n"
            "        [--width MODEL_DEFAULT] [--height MODEL_DEFAULT] [--steps 50]\n"
            "        [--cfg 4] [--image-cfg 1.5] [--shift 3] [--seed 42]\n"
            "        [--vae-tiling 0|1] [--vae-tile-size 64] [--vae-tile-overlap 0.5]\n"
@@ -51,6 +52,7 @@ option_map parse_arguments(int argc, char ** argv) {
         "--width", "--height", "--steps", "--cfg", "--image-cfg", "--shift", "--seed",
         "--vae-tiling", "--vae-tile-size", "--vae-tile-overlap",
         "--understanding-backend", "--vision-backend", "--generation-backend", "--generation-max-vram",
+        "--n-ctx", "--n-batch", "--n-ubatch",
     };
     for (const auto & entry : args) {
         if (std::find(known.begin(), known.end(), entry.first) == known.end()) {
@@ -128,7 +130,10 @@ int run(int argc, char ** argv) {
 
     umm::session session(model, "", value(args, "--understanding-backend"),
                          value(args, "--generation-backend"), value(args, "--generation-max-vram"),
-                         value(args, "--vision-backend"));
+                         value(args, "--vision-backend"),
+                         std::stoi(value(args, "--n-ctx", "0")),
+                         std::stoi(value(args, "--n-batch", "0")),
+                         std::stoi(value(args, "--n-ubatch", "0")));
     if (mode == "text") {
         std::cout << session.text(prompt, std::stoi(value(args, "--max-tokens", "256"))) << '\n';
         return 0;
