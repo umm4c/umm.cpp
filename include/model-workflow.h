@@ -36,6 +36,9 @@ public:
     // Answer a question conditioned on an input image.
     virtual std::string understand(workflow_context & context, const image_input & image,
                                     const std::string & prompt, int max_tokens, bool think);
+    virtual std::string understand_sequence(workflow_context & context,
+                                            const std::vector<understanding_segment> & content,
+                                            int max_tokens);
     // Generate an image, optionally conditioned on an input image for editing.
     virtual image_result generate(workflow_context & context, const std::string & prompt,
                                   const image_options & options, const image_input * input) = 0;

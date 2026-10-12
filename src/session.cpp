@@ -8,6 +8,7 @@
 #include "stable-diffusion.h"
 #include "sd-cpp-adapter.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -231,7 +232,8 @@ void session::impl::append_native_image(const image_input & image) {
         image.width / stride,
         image.height / stride);
     if (active_metrics) {
-        active_metrics->vision_encode_ms = metrics_elapsed_ms(start);
+        active_metrics->vision_encode_ms =
+            std::max(0.0, active_metrics->vision_encode_ms) + metrics_elapsed_ms(start);
         active_metrics->vision_tokens += language_model.tokens().size() - before;
     }
 }
@@ -250,7 +252,8 @@ void session::impl::append_vision_image(const image_input & image) {
     const auto before = language_model.tokens().size();
     language_model.append_bagel_image_embeddings(sd_vision_adapter->encode(image));
     if (active_metrics) {
-        active_metrics->vision_encode_ms = metrics_elapsed_ms(start);
+        active_metrics->vision_encode_ms =
+            std::max(0.0, active_metrics->vision_encode_ms) + metrics_elapsed_ms(start);
         active_metrics->vision_tokens += language_model.tokens().size() - before;
     }
 }
@@ -368,6 +371,31 @@ std::string session::understand(const image_input & image, const std::string & p
     if (metrics) metrics->inference_start = metrics_clock::now();
     auto context = impl_->workflow_context_for_request();
     return impl_->workflow->understand(context, prepared, prompt, max_tokens, think);
+}
+
+std::string session::understand_sequence(const std::vector<understanding_segment> & content,
+                                         int max_tokens, request_metrics * metrics) {
+    if (impl_->language_model.family() != model_family::sensenova_u1 ||
+        !supports(model_capability::understand)) {
+        throw std::invalid_argument("Ordered multimodal understanding requires SenseNova U1");
+    }
+    active_metric_scope binding(impl_->active_metrics, metrics);
+    const auto preprocess_start = metrics_clock::now();
+    std::vector<understanding_segment> prepared;
+    prepared.reserve(content.size());
+    for (const auto & segment : content) {
+        if (const auto * image = std::get_if<image_input>(&segment)) {
+            prepared.emplace_back(prepare_image_input(impl_->language_model.family(), *image));
+        } else {
+            prepared.emplace_back(std::get<std::string>(segment));
+        }
+    }
+    if (metrics) {
+        metrics->input_preprocess_ms = metrics_elapsed_ms(preprocess_start);
+        metrics->inference_start = metrics_clock::now();
+    }
+    auto context = impl_->workflow_context_for_request();
+    return impl_->workflow->understand_sequence(context, prepared, max_tokens);
 }
 
 image_result session::image(const std::string & prompt, const image_options & options,

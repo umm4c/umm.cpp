@@ -288,14 +288,52 @@ public:
 
     std::string understand(workflow_context & context, const image_input & image,
                             const std::string & prompt, int max_tokens, bool think) override {
+        return understand_content(context, {image, "\n" + prompt}, max_tokens, think);
+    }
+
+    std::string understand_sequence(workflow_context & context,
+                                    const std::vector<understanding_segment> & content,
+                                    int max_tokens) override {
+        return understand_content(context, content, max_tokens, false);
+    }
+
+    std::string understand_content(workflow_context & context,
+                                   const std::vector<understanding_segment> & content,
+                                   int max_tokens, bool think) {
         if (max_tokens < 1) {
             throw std::invalid_argument("max_tokens must be positive");
         }
         auto & engine = context.language_model;
+        size_t required_tokens = engine.tokenize("<|im_start|>user\n<|im_end|>\n<|im_start|>assistant\n"
+                                                 "<think>\n\n</think>\n\n").size() +
+                                 size_t(max_tokens) * (think ? 2 : 1) + 16;
+        for (const auto & segment : content) {
+            if (const auto * image = std::get_if<image_input>(&segment)) {
+                required_tokens += size_t(image->width / 32) * (image->height / 32) + 2;
+            } else {
+                required_tokens += engine.tokenize(std::get<std::string>(segment)).size();
+            }
+        }
+        if (required_tokens > engine.context_capacity()) {
+            throw std::invalid_argument("Ordered multimodal input needs " +
+                                        std::to_string(required_tokens) + " tokens; context has " +
+                                        std::to_string(engine.context_capacity()));
+        }
         engine.reset();
         engine.append(engine.tokenize("<|im_start|>user\n"));
-        context.append_vision_image(image);
-        engine.append(engine.tokenize("\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"));
+        std::string pending_text;
+        for (const auto & segment : content) {
+            if (const auto * image = std::get_if<image_input>(&segment)) {
+                if (!pending_text.empty()) {
+                    engine.append(engine.tokenize(pending_text));
+                    pending_text.clear();
+                }
+                context.append_vision_image(*image);
+            } else {
+                pending_text += std::get<std::string>(segment);
+            }
+        }
+        engine.append(engine.tokenize(pending_text + "<|im_end|>\n<|im_start|>assistant\n"));
         if (think) {
             engine.append(engine.tokenize("<think>\n"));
             begin_text_decode(context);
@@ -542,6 +580,12 @@ interleave_result model_workflow::interleave(workflow_context &, const std::stri
 
 std::string model_workflow::understand(workflow_context &, const image_input &, const std::string &, int, bool) {
     throw std::invalid_argument("Image understanding is not supported by the selected model");
+}
+
+std::string model_workflow::understand_sequence(workflow_context &,
+                                               const std::vector<understanding_segment> &,
+                                               int) {
+    throw std::invalid_argument("Ordered multimodal understanding is not supported by the selected model");
 }
 
 std::unique_ptr<model_workflow> create_model_workflow(model_family family) {
