@@ -388,6 +388,7 @@ def convert(
     generation_outtype: str | None = None,
     lora_path: Path | None = None,
     lora_strength: float = 1.0,
+    reuse_understanding_from: Path | None = None,
 ) -> None:
     """Convert a checkpoint into a package using an atomic temporary directory."""
 
@@ -399,6 +400,19 @@ def convert(
     spec = spec_for(validate_config(source))
     if lora_path is not None and spec != U1_SPEC:
         raise ValueError("LoRA fusion currently supports SenseNova U1.5 only")
+    understanding = None
+    if reuse_understanding_from is not None:
+        if spec != U1_SPEC:
+            raise ValueError("Reusing understanding weights currently supports SenseNova U1.5 only")
+        existing = reuse_understanding_from.resolve(strict=True)
+        manifest = read_json(existing / "model.json")
+        if (manifest.get("format"), manifest.get("version"), manifest.get("architecture")) != (
+            "umm", 2, spec.architecture
+        ):
+            raise ValueError("Existing understanding package is not a U1.5 UMM v2 package")
+        understanding = (existing / manifest["components"]["understanding"]).resolve(strict=True)
+        if not understanding.is_file():
+            raise ValueError("Existing understanding GGUF is not a file")
     lora = LoRAAdapter(lora_path, lora_strength) if lora_path is not None else None
     shards = source_shards(source, spec.architecture)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -406,12 +420,15 @@ def convert(
     with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
         package = Path(temporary) / "package"
         package.mkdir()
-        run_converter(
-            source,
-            package / "understanding.gguf",
-            "--outtype",
-            outtype,
-        )
+        if understanding is None:
+            run_converter(
+                source,
+                package / "understanding.gguf",
+                "--outtype",
+                outtype,
+            )
+        else:
+            (package / "understanding.gguf").hardlink_to(understanding)
         tensor_count = write_generation(
             shards,
             package / "generation.gguf",
@@ -463,6 +480,11 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="Scale for the fused LoRA delta (default: 1.0)",
     )
+    parser.add_argument(
+        "--reuse-understanding-from",
+        type=Path,
+        help="Hard-link understanding.gguf from an existing U1.5 UMM package",
+    )
     return parser.parse_args()
 
 
@@ -476,6 +498,7 @@ def main() -> None:
             args.generation_outtype,
             args.lora,
             args.lora_strength,
+            args.reuse_understanding_from,
         )
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         raise SystemExit(f"umm conversion: {error}")

@@ -143,21 +143,24 @@ python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1-310p
 python scripts/convert-model.py /path/to/BAGEL-7B-MoT --output /path/to/bagel
 ```
 
-The official `SenseNova-U1.5-8B-MoT-LoRA-8step` adapter is fused into the
+The official `SenseNova-U1.5-8B-MoT-LoRA-8step-V2` adapter is fused into the
 generation weights while converting a released `SenseNova-U1.5-8B-MoT` base
 checkpoint. It is not compatible with the Preview checkpoint:
 
 ```sh
 python scripts/convert-model.py /path/to/SenseNova-U1.5-8B-MoT \
-  --output /path/to/u1.5-lora-8step \
+  --output /path/to/u1.5-lora-8step-v2 \
   --outtype q8_0 --generation-outtype f16 \
-  --lora /path/to/SenseNova-U1.5-8B-MoT-LoRA-8step.safetensors
+  --lora /path/to/SenseNova-U1.5-8B-MoT-LoRA-8step-V2.safetensors
 ```
 
 `--lora-strength` scales the merged delta and defaults to `1.0`. The converter
 checks all adapter targets before writing the package, and records the merged
 adapter filename and strength in `model.json`; inference does not need the
 adapter file afterwards.
+If a U1.5 UMM package from the same base checkpoint already exists, add
+`--reuse-understanding-from /path/to/existing-package` to hard-link its
+`understanding.gguf` and avoid converting or storing a second copy.
 
 The resulting package contains a `model.json` manifest and model-family-specific
 components:
@@ -225,7 +228,7 @@ requests whose input needs more than that context require a larger-memory setup.
 
 For the distilled official 8-step LoRA, use its sampling settings rather than
 the base model defaults. In the Docker command above, mount
-`/path/to/u1.5-lora-8step` as `/model` and add these arguments to `umm-cli`:
+`/path/to/u1.5-lora-8step-v2` as `/model` and add these arguments to `umm-cli`:
 
 ```sh
 --width 2048 --height 2048 --steps 8 --cfg 1 --shift 3 --seed 42
@@ -247,7 +250,7 @@ docker run --rm --security-opt seccomp=unconfined \
   -e GGML_SCHED_STRICT_ACCEL=1 \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
   -v "$PWD/build-cann/bin:/usr/local/lib/umm:ro" \
-  -v /path/to/u1.5-lora-8step:/model:ro -v "$PWD/outputs:/output" \
+  -v /path/to/u1.5-lora-8step-v2:/model:ro -v "$PWD/outputs:/output" \
   umm-cann:8.5.0-mvp bash -lc '
     export LD_LIBRARY_PATH=/usr/local/lib/umm:${LD_LIBRARY_PATH:-}
     /usr/local/lib/umm/umm-cli --model /model --mode interleave \
