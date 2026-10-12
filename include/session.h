@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace umm {
@@ -15,6 +16,8 @@ struct image_input {
     int height;
     std::vector<uint8_t> rgb;
 };
+
+using understanding_segment = std::variant<std::string, image_input>;
 
 struct image_options {
     int width = 0;   // Zero selects the model default.
@@ -63,6 +66,8 @@ public:
     std::string text(const std::string & prompt, int max_tokens = 256);
     std::string understand(const image_input & image, const std::string & prompt,
                            int max_tokens = 256, bool think = false, request_metrics * metrics = nullptr);
+    std::string understand_sequence(const std::vector<understanding_segment> & content,
+                                    int max_tokens = 256, request_metrics * metrics = nullptr);
     image_result image(const std::string & prompt, const image_options & options = {},
                        request_metrics * metrics = nullptr);
     image_result edit(const image_input & image, const std::string & prompt, const image_options & options = {});

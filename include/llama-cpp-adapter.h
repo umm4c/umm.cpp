@@ -56,6 +56,7 @@ public:
                        const std::vector<ggml_tensor *> & keys, const std::vector<ggml_tensor *> & values);
     const std::vector<llama_token> & tokens() const { return tokens_; }
     const std::vector<llama_pos> & positions() const { return positions_; }
+    size_t context_capacity() const { return llama_n_ctx(context_.get()); }
 
 private:
     std::string architecture_;

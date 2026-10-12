@@ -177,9 +177,25 @@ json run_case(umm::session & session, const json & request,
             output = {{"type", "image"}, {"path", output_path.string()},
                       {"width", image.width}, {"height", image.height}};
         } else if (task == "multimodal_prefill") {
-            return {{"type", "result"}, {"case_id", case_id}, {"status", "error"},
-                    {"error", {{"code", "unsupported_input_format"}, {"message", "Multimodal prefill is not supported by this session interface"}}},
-                    {"timings_ms", timings(metrics, start)}, {"token_counts", token_counts(metrics)}};
+            if (image_count == 0) {
+                throw std::invalid_argument("Multimodal prefill needs at least one image");
+            }
+            const int max_tokens = required<int>(params, "max_new_tokens");
+            if (max_tokens <= 0) throw std::invalid_argument("max_new_tokens must be positive");
+            std::vector<umm::understanding_segment> ordered;
+            ordered.reserve(content.size());
+            metrics.image_decode_ms = 0;
+            for (const auto & item : content) {
+                const auto type = required<std::string>(item, "type");
+                if (type == "text") {
+                    ordered.emplace_back(required<std::string>(item, "value"));
+                } else {
+                    const auto decode_start = clock_type::now();
+                    ordered.emplace_back(umm::cli::read_image(required<std::string>(item, "path")));
+                    metrics.image_decode_ms += elapsed_ms(decode_start);
+                }
+            }
+            output = {{"type", "text"}, {"text", session.understand_sequence(ordered, max_tokens, &metrics)}};
         } else {
             throw std::invalid_argument("Unknown task_class: " + task);
         }
