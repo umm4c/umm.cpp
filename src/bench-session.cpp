@@ -1,15 +1,22 @@
 #include "image-io.h"
+#include "build-identity.h"
+#include "ggml-backend.h"
+#include "gguf.h"
 #include "json.hpp"
+#include "model-package.h"
 #include "session.h"
 
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <unistd.h>
 
@@ -93,6 +100,78 @@ json token_counts(const umm::request_metrics & metrics) {
     return {{"input", available(metrics.input_tokens)},
             {"vision", metrics.vision_encode_ms < 0 ? json(nullptr) : json(metrics.vision_tokens)},
             {"output", available(metrics.output_tokens)}};
+}
+
+json backend_devices(const std::string & requested) {
+    if (requested.empty()) return nullptr;
+    json devices = json::array();
+    size_t offset = 0;
+    while (offset < requested.size()) {
+        const auto end = requested.find('&', offset);
+        const auto name = requested.substr(offset, end == std::string::npos ? end : end - offset);
+        auto * device = ggml_backend_dev_by_name(name.c_str());
+        if (!device) throw std::runtime_error("Unknown backend device: " + name);
+        devices.push_back({{"name", ggml_backend_dev_name(device)},
+                           {"description", ggml_backend_dev_description(device)}});
+        if (end == std::string::npos) break;
+        offset = end + 1;
+    }
+    return devices;
+}
+
+json weight_precision(const std::string & path) {
+    if (std::filesystem::path(path).extension() != ".gguf") {
+        return {{"tensor_count", nullptr}, {"tensor_types", nullptr},
+                {"file_bytes", std::filesystem::file_size(path)},
+                {"precision_status", "unavailable"}};
+    }
+    std::unique_ptr<gguf_context, decltype(&gguf_free)> context(
+        gguf_init_from_file(path.c_str(), {true, nullptr}), gguf_free);
+    if (!context) throw std::runtime_error("Could not inspect GGUF precision: " + path);
+    json counts = json::object();
+    for (int64_t i = 0; i < gguf_get_n_tensors(context.get()); ++i) {
+        const char * type = ggml_type_name(gguf_get_tensor_type(context.get(), i));
+        if (!counts.contains(type)) counts[type] = 0;
+        counts[type] = counts[type].get<int64_t>() + 1;
+    }
+    return {{"tensor_count", gguf_get_n_tensors(context.get())},
+            {"tensor_types", counts},
+            {"file_bytes", std::filesystem::file_size(path)}};
+}
+
+json runtime_identity(const std::string & model,
+                      const std::map<std::string, std::string> & options) {
+    const auto package = umm::resolve_model(model);
+    json weights = json::object();
+    for (const auto & component : package.components) {
+        weights[component.first] = weight_precision(component.second);
+    }
+    json merged_lora = nullptr;
+    if (std::filesystem::is_directory(model)) {
+        std::ifstream manifest(std::filesystem::path(model) / "model.json");
+        const auto data = json::parse(manifest);
+        if (data.contains("merged_lora")) merged_lora = data.at("merged_lora");
+    }
+    const auto strict = std::getenv("GGML_SCHED_STRICT_ACCEL");
+    const auto physical_device = std::getenv("UMM_PHYSICAL_DEVICE");
+    return {{"architecture", package.architecture},
+            {"weights", weights},
+            {"merged_lora", merged_lora},
+            {"hardware", {{"physical_device", physical_device ? json(physical_device) : json(nullptr)},
+                           {"understanding", backend_devices(option(options, "--understanding-backend"))},
+                           {"generation", backend_devices(option(options, "--generation-backend"))},
+                           {"vision", backend_devices(option(options, "--vision-backend"))}}},
+            {"policy", {{"mode", option(options, "--understanding-backend").empty() &&
+                                  option(options, "--generation-backend").empty() ?
+                                      "automatic_backend" : "explicit_backend"},
+                        {"strict_accelerator", strict != nullptr},
+                        {"generation_max_vram", option(options, "--generation-max-vram")}}},
+            {"build", {{"umm", UMM_BUILD_COMMIT},
+                       {"llama_cpp", UMM_LLAMA_COMMIT},
+                       {"stable_diffusion_cpp", UMM_SD_COMMIT},
+                       {"dirty", {{"umm", UMM_BUILD_DIRTY},
+                                  {"llama_cpp", UMM_LLAMA_DIRTY},
+                                  {"stable_diffusion_cpp", UMM_SD_DIRTY}}}}}};
 }
 
 json run_case(umm::session & session, const json & request,
@@ -232,7 +311,8 @@ int main(int argc, char ** argv) {
                              std::stoi(option(options, "--n-ubatch", "0")));
         json ready = {{"type", "ready"}, {"protocol", "umm-session/v1"},
                       {"cold_start_ms", elapsed_ms(startup_start)},
-                      {"model", model}, {"options", options}};
+                      {"model", model}, {"options", options},
+                      {"runtime_identity", runtime_identity(model, options)}};
         if (const char * model_hash = std::getenv("UMM_MODEL_MANIFEST_SHA256")) {
             ready["model_manifest_sha256"] = model_hash;
         }
