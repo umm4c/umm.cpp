@@ -307,6 +307,13 @@ Model-specific defaults:
 stdin/stdout (`umm-session/v1`). It sends a `ready` record, then one `result`
 per request. Backend logs go to stderr. For example:
 
+`ready.runtime_identity` records explicitly selected backend devices, GGUF
+tensor type counts, merged LoRA metadata, scheduling settings, and the build
+commits and dirty flags for UMM and both engines. Revisions refresh on each
+build. Automatic backend selection and non-GGUF precision are reported as
+unavailable; launchers can provide the physical device label through
+`UMM_PHYSICAL_DEVICE`.
+
 ```sh
 build/bin/umm-session --model /path/to/package --understanding-backend CANN0 \
   --generation-backend CANN0 --n-ctx 2048 --n-batch 512 --n-ubatch 256
