@@ -5,9 +5,8 @@ The four model-facing scripts run the validated CANN build inside
 the selected output directory read-write, pass through the requested Ascend
 devices, and enable `GGML_SCHED_STRICT_ACCEL=1` by default.
 
-Both runners use the current submodule revisions and default to `build-cann`.
-Build this directory in the CANN container before running either script, or
-set `BUILD_DIR` to another build directory. U1.5 supports text, image, and
+U1.5 defaults to `build-cann-rebase`; set `BUILD_DIR` to another validated
+build when needed. U1.5 supports text, image, and
 interleaved text/image generation. BAGEL understanding and editing require the
 F16 multi-card layout; the Q8 single-card path is for text and image generation.
 F16 edit and think-edit complete the CLI path, but current 256x256 and 512x512
@@ -18,7 +17,7 @@ For example, from the repository root with the CANN container available:
 ```bash
 docker run --rm --security-opt seccomp=unconfined -v "$PWD:/workspace/umm" \
   -w /workspace/umm umm-cann:8.5.0-mvp bash -lc \
-  'cmake -S . -B build-cann -DCMAKE_BUILD_TYPE=Release -DGGML_CANN=ON -DSOC_TYPE=Ascend310P3 && cmake --build build-cann -j8'
+  'cmake -S . -B build-cann-rebase -DCMAKE_BUILD_TYPE=Release -DGGML_CANN=ON -DSOC_TYPE=Ascend310P3 && cmake --build build-cann-rebase -j8'
 ```
 
 ## Launch scripts
@@ -40,20 +39,25 @@ MODEL_DIR=models/BAGEL-7B-MoT-F16-UMM DEVICES=2,3,4 \
   GENERATION_MAX_VRAM=CANN1=14,CANN2=14 \
   scripts/ascend/run-bagel.sh understand 'What is shown?' outputs/apple.png
 
-# SenseNova U1.5
+# SenseNova U1.5: default model is 8-step LoRA V2, Q8 understanding/F16 generation
 scripts/ascend/run-u15.sh text '用一句话介绍华为昇腾。'
-STEPS=8 scripts/ascend/run-u15.sh image 'A red apple on a wooden table'
+scripts/ascend/run-u15.sh image 'A red apple on a wooden table'
 ```
 
 Use `--help` on either script for the complete environment-variable list. The
-defaults are deliberately small (256x256 and 8 steps). Recommended validated
+U1.5 defaults to 1024x1024, 8 steps and CFG 1 for image generation; interleaved
+generation defaults to 512x512. BAGEL retains its separate defaults. Validated
 layouts are:
 
 | Model | Physical devices | Logical layout |
 | --- | --- | --- |
 | BAGEL Q8 understanding + F16 generation | `DEVICES=2` | Text-to-image on CANN0; validated at 1024x1024 with VAE tiling. Q8 understanding/editing remain unvalidated. |
 | BAGEL F16 understanding + F16 generation | `DEVICES=2,3,4` | LLM/VAE CANN0, diffusion CANN1+CANN2, vision CANN1. Text, generation, and understanding run; editing completes but image quality is not yet usable. |
-| U1.5 Q8 understanding + F16 generation | `DEVICES=2` | LLM and diffusion on CANN0; validated at 2048x2048, 50 steps |
+| U1.5 8-step LoRA V2, Q8 understanding + F16 generation | `DEVICES=2` | LLM and diffusion on CANN0; validated at 1024x1024, 8 steps, CFG 1 |
+
+The default U1.5 launcher sets `N_CTX=2048`, `N_BATCH=512`, and
+`N_UBATCH=256`. These values passed strict CANN scheduling in text and image
+tests; the CLI's larger model defaults can put a matrix operation on CPU.
 
 The order in `DEVICES` defines the logical CANN indexes inside the container.
 For example, `DEVICES=4,5,6` maps physical devices 4/5/6 to CANN0/1/2.
@@ -73,8 +77,8 @@ scripts/ascend/bench-u15.sh image 'A red apple on a wooden table'
 # A shorter manual run
 WARMUP=0 REPEATS=1 STEPS=1 scripts/ascend/bench-bagel.sh image 'smoke test'
 
-# Full-size U1.5 run
-WARMUP=0 REPEATS=1 WIDTH=2048 HEIGHT=2048 STEPS=50 \
+# Full-size U1.5 V2 run
+WARMUP=0 REPEATS=1 WIDTH=2048 HEIGHT=2048 STEPS=8 CFG=1 \
   scripts/ascend/bench-u15.sh image 'A red apple on a wooden table'
 ```
 

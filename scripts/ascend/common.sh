@@ -78,6 +78,7 @@ ascend_run_umm() {
     local -a docker_args=(
         run --rm --name "${container_name}"
         --security-opt seccomp=unconfined
+        --ulimit core=0
         --network host
         -e "GGML_SCHED_STRICT_ACCEL=${strict_accel}"
         -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro

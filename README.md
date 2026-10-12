@@ -79,8 +79,9 @@ The interface provides these modes:
 ## Platform support
 
 Validation in this repository covers Linux with NVIDIA CUDA and Ascend CANN.
-SenseNova U1.5 has been tested on one Ascend 310P3 device with CANN 8.5.0 at
-1024 x 1024 for 50 Euler steps and 2048 x 2048 for 8 steps. Model graph operations run on the NPU;
+SenseNova U1.5 8-step LoRA V2 has been tested on one Ascend 310P3 device with
+CANN 8.5.0 at 1024 x 1024, 8 Euler steps, CFG 1 and shift 3. The older base-model
+50-step results remain historical comparisons. Model graph operations run on the NPU;
 Ascend 310P also supports BAGEL on a single card with Q8_0 understanding weights
 and F16 generation weights. CPU handles supporting work such as tokenization,
 scheduling, file I/O, and PNG encoding. See
@@ -190,15 +191,16 @@ Other package rules:
 ### Generate text
 
 ```sh
-build/bin/umm-cli --model /path/to/u1 \
+build/bin/umm-cli --model /path/to/u1.5-lora-8step-v2 \
   --mode text --prompt 'What is 2 + 3?'
 ```
 
 ### Generate an image
 
 ```sh
-build/bin/umm-cli --model /path/to/u1 --mode image \
-  --prompt 'a red cube on a white background' --output cube.png
+build/bin/umm-cli --model /path/to/u1.5-lora-8step-v2 --mode image \
+  --prompt 'a red cube on a white background' --output cube.png \
+  --width 1024 --height 1024 --steps 8 --cfg 1 --shift 3
 ```
 
 On one Ascend 310P device, select the same CANN backend for both components:
@@ -210,28 +212,29 @@ docker run --rm --security-opt seccomp=unconfined \
   --device /dev/hisi_hdc --device /dev/devmm_svm \
   -e GGML_SCHED_STRICT_ACCEL=1 \
   -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
-  -v "$PWD/build-cann/bin:/usr/local/lib/umm:ro" \
-  -v /path/to/u1:/model:ro -v "$PWD/outputs:/output" \
+  -v "$PWD/build-cann-rebase/bin:/usr/local/lib/umm:ro" \
+  -v /path/to/u1.5-lora-8step-v2:/model:ro -v "$PWD/outputs:/output" \
   umm-cann:8.5.0-mvp bash -lc '
     export LD_LIBRARY_PATH=/usr/local/lib/umm:${LD_LIBRARY_PATH:-}
     /usr/local/lib/umm/umm-cli --model /model --mode image \
       --prompt "a red cube on a white background" --output /output/cube.png \
       --understanding-backend CANN0 --generation-backend CANN0 \
-      --generation-max-vram CANN0=40
+      --generation-max-vram CANN0=40 \
+      --n-ctx 2048 --n-batch 512 --n-ubatch 256 \
+      --width 1024 --height 1024 \
+      --steps 8 --cfg 1 --shift 3
   '
 ```
 
 Replace `/dev/davinci2` with the physical device to use; it appears as CANN0
-inside the container. The Q8 understanding/F16 generation package above is the
-validated single-card layout.
+inside the container. The V2 package uses Q8 understanding and F16 generation
+weights on one card.
 
 When both U1.5 components use the same CANN device, UMM uses a 2048-token
 understanding context to keep both sets of weights resident. Image-understanding
 requests whose input needs more than that context require a larger-memory setup.
 
-For the distilled official 8-step LoRA, use its sampling settings rather than
-the base model defaults. In the Docker command above, mount
-`/path/to/u1.5-lora-8step-v2` as `/model` and add these arguments to `umm-cli`:
+For a 2048 x 2048 V2 run, retain the 8-step settings and change dimensions:
 
 ```sh
 --width 2048 --height 2048 --steps 8 --cfg 1 --shift 3 --seed 42
@@ -278,8 +281,10 @@ build/bin/umm-cli --model /path/to/u1 --mode think-image \
 ```
 
 Image commands write a PNG and a companion `.png.json` file containing generation
-settings, reasoning, and tokens. Defaults are 2048 × 2048, 50 Euler steps, guidance
-4, flow shift 3, and seed 42. Use `--width`, `--height`, `--steps`, `--cfg`,
+settings, reasoning, and tokens. The generic CLI defaults are 2048 × 2048,
+50 Euler steps, guidance 4, flow shift 3, and seed 42. For U1.5 LoRA V2,
+explicitly use `--steps 8 --cfg 1 --shift 3`; the Ascend U1.5 scripts set these
+values by default. Use `--width`, `--height`, `--steps`, `--cfg`,
 `--shift`, and `--seed` to adjust them; dimensions must be divisible by 32.
 Run `build/bin/umm-cli --help` for all options.
 
