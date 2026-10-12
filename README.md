@@ -159,8 +159,11 @@ checks all adapter targets before writing the package, and records the merged
 adapter filename and strength in `model.json`; inference does not need the
 adapter file afterwards.
 If a U1.5 UMM package from the same base checkpoint already exists, add
-`--reuse-understanding-from /path/to/existing-package` to hard-link its
-`understanding.gguf` and avoid converting or storing a second copy.
+`--reuse-understanding-from /path/to/existing-package` and
+`--expected-understanding-sha256 SHA256` to hard-link its `understanding.gguf`
+without storing a second copy. Obtain the expected digest from a trusted
+record and verify it against the existing file; the converter also checks the
+GGUF architecture and the requested understanding weight type.
 
 The resulting package contains a `model.json` manifest and model-family-specific
 components:
