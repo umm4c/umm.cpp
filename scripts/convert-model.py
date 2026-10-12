@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 from contextlib import nullcontext
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -381,6 +383,40 @@ def build_manifest(spec: ModelSpec) -> dict:
     }
 
 
+def validate_reused_understanding(package: Path, outtype: str, expected_sha256: str) -> Path:
+    """Validate the exact U1.5 understanding artifact before sharing its inode."""
+
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
+        raise ValueError("--expected-understanding-sha256 must be a 64-digit hex digest")
+    existing = package.resolve(strict=True)
+    manifest = read_json(existing / "model.json")
+    if (manifest.get("format"), manifest.get("version"), manifest.get("architecture")) != (
+        "umm", 2, U1_SPEC.architecture
+    ):
+        raise ValueError("Existing understanding package is not a U1.5 UMM v2 package")
+    name = manifest.get("components", {}).get("understanding")
+    if not isinstance(name, str):
+        raise ValueError("Existing package has no understanding component")
+    understanding = (existing / name).resolve(strict=True)
+    if not understanding.is_relative_to(existing) or not understanding.is_file():
+        raise ValueError("Existing understanding GGUF must be inside the package")
+    with understanding.open("rb") as stream:
+        actual_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+    if actual_sha256 != expected_sha256.lower():
+        raise ValueError("Existing understanding GGUF does not match expected SHA256")
+    reader = gguf.GGUFReader(understanding)
+    field = reader.get_field("general.architecture")
+    architecture = bytes(field.parts[field.data[0]]).decode() if field else None
+    if architecture != U1_SPEC.architecture:
+        raise ValueError("Existing understanding GGUF has the wrong architecture")
+    expected_type = gguf.GGMLQuantizationType[outtype.upper()]
+    by_name = {tensor.name: tensor.tensor_type for tensor in reader.tensors}
+    for tensor_name in ("token_embd.weight", "blk.0.attn_q.weight"):
+        if by_name.get(tensor_name) != expected_type:
+            raise ValueError(f"Existing understanding GGUF has the wrong {outtype} type for {tensor_name}")
+    return understanding
+
+
 def convert(
     source: Path,
     output: Path,
@@ -388,6 +424,8 @@ def convert(
     generation_outtype: str | None = None,
     lora_path: Path | None = None,
     lora_strength: float = 1.0,
+    reuse_understanding_from: Path | None = None,
+    expected_understanding_sha256: str | None = None,
 ) -> None:
     """Convert a checkpoint into a package using an atomic temporary directory."""
 
@@ -399,6 +437,17 @@ def convert(
     spec = spec_for(validate_config(source))
     if lora_path is not None and spec != U1_SPEC:
         raise ValueError("LoRA fusion currently supports SenseNova U1.5 only")
+    understanding = None
+    if reuse_understanding_from is not None:
+        if spec != U1_SPEC:
+            raise ValueError("Reusing understanding weights currently supports SenseNova U1.5 only")
+        if expected_understanding_sha256 is None:
+            raise ValueError("--reuse-understanding-from requires --expected-understanding-sha256")
+        understanding = validate_reused_understanding(
+            reuse_understanding_from, outtype, expected_understanding_sha256
+        )
+    elif expected_understanding_sha256 is not None:
+        raise ValueError("--expected-understanding-sha256 requires --reuse-understanding-from")
     lora = LoRAAdapter(lora_path, lora_strength) if lora_path is not None else None
     shards = source_shards(source, spec.architecture)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -406,12 +455,15 @@ def convert(
     with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
         package = Path(temporary) / "package"
         package.mkdir()
-        run_converter(
-            source,
-            package / "understanding.gguf",
-            "--outtype",
-            outtype,
-        )
+        if understanding is None:
+            run_converter(
+                source,
+                package / "understanding.gguf",
+                "--outtype",
+                outtype,
+            )
+        else:
+            (package / "understanding.gguf").hardlink_to(understanding)
         tensor_count = write_generation(
             shards,
             package / "generation.gguf",
@@ -463,6 +515,15 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="Scale for the fused LoRA delta (default: 1.0)",
     )
+    parser.add_argument(
+        "--reuse-understanding-from",
+        type=Path,
+        help="Hard-link understanding.gguf from an existing U1.5 UMM package",
+    )
+    parser.add_argument(
+        "--expected-understanding-sha256",
+        help="Required with --reuse-understanding-from; verifies the exact GGUF before linking",
+    )
     return parser.parse_args()
 
 
@@ -476,6 +537,8 @@ def main() -> None:
             args.generation_outtype,
             args.lora,
             args.lora_strength,
+            args.reuse_understanding_from,
+            args.expected_understanding_sha256,
         )
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         raise SystemExit(f"umm conversion: {error}")
