@@ -58,7 +58,8 @@ public:
             const std::string & generation_max_vram = "",
             const std::string & vision_backend = "",
             int context_size = 0, int batch_size = 0, int microbatch_size = 0,
-            const std::string & u1_prefill_mode = "optimized");
+            const std::string & u1_prefill_mode = "optimized",
+            const std::string & u1_v_cache_layout = "default");
     ~session();
     session(const session &) = delete;
     session & operator=(const session &) = delete;

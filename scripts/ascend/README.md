@@ -39,6 +39,10 @@ groups, within `n_batch` and `n_ubatch`. Token embedding lookup runs on its
 weight backend; embedding rows pass through host memory for batch assembly.
 The default remains `optimized` pending paired quality validation.
 
+CLI and session accept experimental `--u1-v-cache-layout contiguous` for
+row-wise V cache updates. The default layout remains unchanged. This option
+is limited to SenseNova and can be combined with `mixed4`.
+
 ```bash
 # BAGEL text and image
 scripts/ascend/run-bagel.sh text 'Describe Ascend NPU.'

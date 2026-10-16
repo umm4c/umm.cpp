@@ -46,7 +46,7 @@ void record_prefill(request_metrics * metrics, const char * kind, size_t cached_
 
 llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context_size, int gpu_layers,
                                      bool full_precision, const std::string & backend,
-                                     int batch_size, int microbatch_size, bool u1_group_causal)
+                                     int batch_size, int microbatch_size, bool u1_group_causal, bool u1_v_cache_contiguous)
     : u1_group_causal_(u1_group_causal) {
     auto mp = llama_model_default_params();
     mp.n_gpu_layers = gpu_layers;
@@ -91,6 +91,7 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
                                     (compact_bagel ? 512 : descriptor.batch_size));
     cp.n_ubatch = std::min<uint32_t>(cp.n_batch, microbatch_size ? microbatch_size :
                                      (compact_bagel ? 256 : cp.n_batch));
+    cp.kv_v_contiguous = u1_v_cache_contiguous;
     cp.n_seq_max = 1;
     cp.n_threads = 8;
     cp.n_threads_batch = 8;

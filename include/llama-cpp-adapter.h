@@ -37,7 +37,7 @@ public:
     explicit llama_cpp_adapter(const std::string & model_path, int context_size = 0, int gpu_layers = 99,
                                bool full_precision = false, const std::string & backend = "",
                                int batch_size = 0, int microbatch_size = 0,
-                               bool u1_group_causal = false);
+                               bool u1_group_causal = false, bool u1_v_cache_contiguous = false);
     std::vector<llama_token> tokenize(const std::string & text) const;
     std::string piece(llama_token token) const;
     bool is_end(llama_token token) const;
