@@ -13,6 +13,31 @@
 
 namespace umm {
 
+namespace {
+void hash_prefill_input(request_metrics * metrics, const llama_batch & batch) {
+    if (!metrics) return;
+    for (int i = 0; i < batch.n_tokens; ++i) {
+        const int32_t values[] = {batch.token ? batch.token[i] : LLAMA_TOKEN_NULL,
+                                 batch.pos[i], batch.pos[batch.n_tokens + i],
+                                 batch.pos[2 * batch.n_tokens + i], batch.pos[3 * batch.n_tokens + i]};
+        for (int32_t value : values) {
+            for (unsigned shift = 0; shift < 32; shift += 8) {
+                metrics->prefill_input_hash ^= (uint32_t(value) >> shift) & 255;
+                metrics->prefill_input_hash *= 1099511628211ULL;
+            }
+        }
+    }
+}
+
+void record_prefill(request_metrics * metrics, const char * kind, size_t cached_tokens,
+                    int tokens, int outputs, double elapsed) {
+    if (!metrics) return;
+    metrics->prefill_batches.push_back({kind, tokens, int64_t(cached_tokens), outputs, elapsed});
+    auto & duration = std::strcmp(kind, "image") == 0 ? metrics->image_prefill_ms : metrics->text_prefill_compute_ms;
+    duration = std::max(0.0, duration) + elapsed;
+}
+} // namespace
+
 // Model/context setup -------------------------------------------------------
 
 llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context_size, int gpu_layers,
@@ -122,7 +147,8 @@ void llama_cpp_adapter::synchronize() {
     llama_synchronize(context_.get());
 }
 
-void llama_cpp_adapter::append(const std::vector<llama_token> & tokens) {
+void llama_cpp_adapter::append(const std::vector<llama_token> & tokens, bool need_logits,
+                                request_metrics * metrics, bool last_chunk_only) {
     if (tokens_.size() + tokens.size() > llama_n_ctx(context_.get())) {
         throw std::runtime_error("Understanding context is full");
     }
@@ -141,7 +167,7 @@ void llama_cpp_adapter::append(const std::vector<llama_token> & tokens) {
         for (int i = 0; i < n; ++i) {
             positions[i] = next_position_ + i;
         }
-        outputs.back() = 1;
+        outputs.back() = need_logits && (!last_chunk_only || offset + n == tokens.size());
         llama_batch batch{};
         batch.n_tokens = n;
         batch.token = const_cast<llama_token *>(tokens.data() + offset);
@@ -149,13 +175,19 @@ void llama_cpp_adapter::append(const std::vector<llama_token> & tokens) {
         batch.n_seq_id = seq_counts.data();
         batch.seq_id = seq_ids.data();
         batch.logits = outputs.data();
+        if (metrics) synchronize();
+        const auto start = metrics_clock::now();
+        has_logits_ = false;
         if (llama_decode(context_.get(), batch) != 0) {
             throw std::runtime_error("Understanding decode failed");
         }
+        if (metrics) synchronize();
+        record_prefill(metrics, "text", tokens_.size(), n, outputs.back(), metrics_elapsed_ms(start));
+        hash_prefill_input(metrics, batch);
         tokens_.insert(tokens_.end(), tokens.begin() + offset, tokens.begin() + offset + n);
         positions_.insert(positions_.end(), positions.begin(), positions.begin() + n);
         next_position_ += n;
-        has_logits_ = true;
+        has_logits_ = outputs.back() != 0;
         offset += n;
     }
 }
@@ -212,13 +244,14 @@ void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> &
 }
 
 void llama_cpp_adapter::append_u1_image_embeddings(const std::vector<float> & embeddings,
-                                                   int grid_width, int grid_height) {
+                                                   int grid_width, int grid_height,
+                                                   bool need_logits, request_metrics * metrics) {
     const auto start = tokenize("<img>");
     if (start.size() != 1) {
         throw std::runtime_error("Missing SenseNova U1 image start token");
     }
-    append(start);
-    append_u1_image_body(embeddings, grid_width, grid_height);
+    append(start, need_logits, metrics);
+    append_u1_image_body(embeddings, grid_width, grid_height, true, need_logits, metrics);
 }
 
 void llama_cpp_adapter::append_u1_generated_image_embeddings(const std::vector<float> & embeddings,
@@ -242,9 +275,14 @@ size_t llama_cpp_adapter::available_u1_generated_image_tokens() const {
 }
 
 void llama_cpp_adapter::append_u1_image_body(const std::vector<float> & embeddings,
-                                             int grid_width, int grid_height) {
+                                             int grid_width, int grid_height, bool close_image,
+                                             bool need_logits, request_metrics * metrics) {
     if (family_ != model_family::sensenova_u1) {
         throw std::invalid_argument("Spatial image embeddings are only supported by SenseNova U1");
+    }
+    const auto start_token = tokenize("<img>");
+    if (start_token.size() != 1 || tokens_.empty() || tokens_.back() != start_token.front()) {
+        throw std::runtime_error("Image embeddings must follow an appended <img> token");
     }
     const int dim = llama_model_n_embd(model_.get());
     if (grid_width <= 0 || grid_height <= 0 || embeddings.empty() || embeddings.size() % dim ||
@@ -274,12 +312,18 @@ void llama_cpp_adapter::append_u1_image_body(const std::vector<float> & embeddin
     batch.n_seq_id = seq_counts.data();
     batch.seq_id = seq_ids.data();
     batch.logits = outputs.data();
+    if (metrics) synchronize();
+    const auto start = metrics_clock::now();
+    has_logits_ = false;
     llama_set_causal_attn(context_.get(), false);
     const int status = llama_decode(context_.get(), batch);
     llama_set_causal_attn(context_.get(), true);
     if (status) {
         throw std::runtime_error("SenseNova U1 image understanding decode failed");
     }
+    if (metrics) synchronize();
+    record_prefill(metrics, "image", tokens_.size(), image_tokens, 0, metrics_elapsed_ms(start));
+    hash_prefill_input(metrics, batch);
 
     tokens_.insert(tokens_.end(), image_tokens, LLAMA_TOKEN_NULL);
     positions_.insert(positions_.end(), image_tokens, temporal);
@@ -288,7 +332,7 @@ void llama_cpp_adapter::append_u1_image_body(const std::vector<float> & embeddin
     if (end.size() != 1) {
         throw std::runtime_error("Missing SenseNova U1 image end token");
     }
-    append(end);
+    if (close_image) append(end, need_logits, metrics);
 }
 
 // Logits and model tensor access -------------------------------------------

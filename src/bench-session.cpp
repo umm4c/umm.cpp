@@ -39,6 +39,7 @@ std::map<std::string, std::string> parse_options(int argc, char ** argv) {
         {"--steps", true}, {"--cfg", true}, {"--image-cfg", true}, {"--shift", true},
         {"--vae-tiling", true}, {"--vae-tile-size", true}, {"--vae-tile-overlap", true},
         {"--n-ctx", true}, {"--n-batch", true}, {"--n-ubatch", true},
+        {"--u1-prefill-mode", true},
     };
     for (const auto & item : options) {
         if (!allowed.count(item.first)) {
@@ -86,6 +87,9 @@ json timings(const umm::request_metrics & metrics, clock_type::time_point start)
             {"generation_model_load", available(metrics.generation_model_load_ms)},
             {"vision_model_load", available(metrics.vision_model_load_ms)},
             {"vision_encode", available(metrics.vision_encode_ms)},
+            {"image_encoder", available(metrics.image_encoder_ms)},
+            {"image_prefill", available(metrics.image_prefill_ms)},
+            {"text_prefill_compute", available(metrics.text_prefill_compute_ms)},
             {"text_prefill", available(metrics.text_prefill_ms)},
             {"text_decode", available(metrics.text_decode_ms)},
             {"ttft", available(metrics.ttft_ms)},
@@ -94,6 +98,24 @@ json timings(const umm::request_metrics & metrics, clock_type::time_point start)
             {"diffusion_step", metrics.diffusion_step_ms.empty() ? json(nullptr) : json(metrics.diffusion_step_ms)},
             {"vae_decode", available(metrics.vae_decode_ms)},
             {"image_write", available(metrics.image_write_ms)}};
+}
+
+json prefill_metrics(const umm::request_metrics & metrics) {
+    if (metrics.prefill_batches.empty()) return nullptr;
+    json batches = json::array();
+    int64_t outputs = 0;
+    int64_t images = 0;
+    for (const auto & batch : metrics.prefill_batches) {
+        batches.push_back({{"kind", batch.kind}, {"tokens", batch.tokens},
+                           {"cached_tokens", batch.cached_tokens}, {"outputs", batch.outputs},
+                           {"elapsed_ms", batch.elapsed_ms}});
+        outputs += batch.outputs;
+        images += batch.kind == "image";
+    }
+    return {{"call_count", batches.size()}, {"logits_rows", outputs},
+            {"attention_mode_switches", 2 * images},
+            {"input_hash_algorithm", "fnv1a64-token-position"},
+            {"input_hash", std::to_string(metrics.prefill_input_hash)}, {"batches", batches}};
 }
 
 json token_counts(const umm::request_metrics & metrics) {
@@ -165,7 +187,8 @@ json runtime_identity(const std::string & model,
                                   option(options, "--generation-backend").empty() ?
                                       "automatic_backend" : "explicit_backend"},
                         {"strict_accelerator", strict != nullptr},
-                        {"generation_max_vram", option(options, "--generation-max-vram")}}},
+                        {"generation_max_vram", option(options, "--generation-max-vram")},
+                        {"u1_prefill_mode", option(options, "--u1-prefill-mode", "optimized")}}},
             {"build", {{"umm", UMM_BUILD_COMMIT},
                        {"llama_cpp", UMM_LLAMA_COMMIT},
                        {"stable_diffusion_cpp", UMM_SD_COMMIT},
@@ -280,11 +303,12 @@ json run_case(umm::session & session, const json & request,
         }
         return {{"type", "result"}, {"case_id", case_id}, {"status", "ok"},
                 {"output", output}, {"timings_ms", timings(metrics, start)},
-                {"token_counts", token_counts(metrics)}};
+                {"token_counts", token_counts(metrics)}, {"prefill", prefill_metrics(metrics)}};
     } catch (const std::exception & error) {
         return {{"type", "result"}, {"case_id", case_id}, {"status", "error"},
                 {"error", {{"code", "request_failed"}, {"message", error.what()}}},
-                {"timings_ms", timings(metrics, start)}, {"token_counts", token_counts(metrics)}};
+                {"timings_ms", timings(metrics, start)}, {"token_counts", token_counts(metrics)},
+                {"prefill", prefill_metrics(metrics)}};
     }
 }
 
@@ -308,7 +332,8 @@ int main(int argc, char ** argv) {
                              option(options, "--generation-max-vram"), option(options, "--vision-backend"),
                              std::stoi(option(options, "--n-ctx", "0")),
                              std::stoi(option(options, "--n-batch", "0")),
-                             std::stoi(option(options, "--n-ubatch", "0")));
+                             std::stoi(option(options, "--n-ubatch", "0")),
+                             option(options, "--u1-prefill-mode", "optimized"));
         json ready = {{"type", "ready"}, {"protocol", "umm-session/v1"},
                       {"cold_start_ms", elapsed_ms(startup_start)},
                       {"model", model}, {"options", options},

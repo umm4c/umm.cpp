@@ -320,22 +320,42 @@ public:
                                         std::to_string(engine.context_capacity()));
         }
         engine.reset();
-        engine.append(engine.tokenize("<|im_start|>user\n"));
+        const bool merge = context.merge_u1_prefill;
+        const bool skip_logits = context.skip_u1_intermediate_logits;
+        std::vector<llama_token> pending_tokens;
+        auto flush = [&](bool final) {
+            engine.append(pending_tokens, !skip_logits || final, context.metrics, skip_logits);
+            pending_tokens.clear();
+        };
+        auto append_tokens = [&](const std::vector<llama_token> & tokens, bool final = false) {
+            if (merge) {
+                pending_tokens.insert(pending_tokens.end(), tokens.begin(), tokens.end());
+                if (final) flush(true);
+            } else {
+                engine.append(tokens, !skip_logits || final, context.metrics, skip_logits);
+            }
+        };
+        append_tokens(engine.tokenize("<|im_start|>user\n"));
         std::string pending_text;
         for (const auto & segment : content) {
             if (const auto * image = std::get_if<image_input>(&segment)) {
                 if (!pending_text.empty()) {
-                    engine.append(engine.tokenize(pending_text));
+                    append_tokens(engine.tokenize(pending_text));
                     pending_text.clear();
                 }
-                context.append_vision_image(*image);
+                if (merge) {
+                    append_tokens(engine.tokenize("<img>"));
+                    flush(false);
+                }
+                context.append_u1_prefill_image(*image, merge, !skip_logits);
+                if (merge) append_tokens(engine.tokenize("</img>"));
             } else {
                 pending_text += std::get<std::string>(segment);
             }
         }
-        engine.append(engine.tokenize(pending_text + "<|im_end|>\n<|im_start|>assistant\n"));
+        append_tokens(engine.tokenize(pending_text + "<|im_end|>\n<|im_start|>assistant\n"));
         if (think) {
-            engine.append(engine.tokenize("<think>\n"));
+            append_tokens(engine.tokenize("<think>\n"), true);
             begin_text_decode(context);
             for (int i = 0; i < max_tokens; ++i) {
                 const auto token = engine.greedy();
@@ -348,7 +368,7 @@ public:
             }
             engine.append(engine.tokenize("\n\n"));
         } else {
-            engine.append(engine.tokenize("<think>\n\n</think>\n\n"));
+            append_tokens(engine.tokenize("<think>\n\n</think>\n\n"), true);
             begin_text_decode(context);
         }
         std::string result;

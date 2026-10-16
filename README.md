@@ -232,7 +232,8 @@ weights on one card.
 
 When both U1.5 components use the same CANN device, UMM uses a 2048-token
 understanding context to keep both sets of weights resident. Image-understanding
-requests whose input needs more than that context require a larger-memory setup.
+requests with longer inputs must explicitly increase `--n-ctx` and the image
+microbatch capacity within the available device memory.
 
 For a 2048 x 2048 V2 run, retain the 8-step settings and change dimensions:
 
@@ -327,6 +328,23 @@ build/bin/umm-session --model /path/to/package --understanding-backend CANN0 \
 followed by text items, plus `params.max_new_tokens`. Unsupported inputs return
 a per-case error; model loading errors return `fatal`. Diffusion settings such
 as `--steps`, `--cfg`, and `--shift` are session flags.
+
+U1 understanding accepts `--u1-prefill-mode optimized|baseline|merge|logits`
+(default `optimized`). `merge` combines consecutive text and image boundary
+IDs into causal batches; `logits` requests only the final prompt logits;
+`optimized` enables both. Image groups retain their noncausal attention and
+spatial positions. Generation and BAGEL workflows retain their existing paths.
+
+Understanding results include `prefill.batches` (kind, token count, cached
+input tokens, logits rows, elapsed milliseconds), aggregate call/logits counts,
+and a batching-independent FNV-1a fingerprint of input IDs and all position axes.
+`image_encoder`, `image_prefill`, and `text_prefill_compute` split encoder and
+LLM execution time. Detailed LLM timers synchronize each batch and include graph
+reservation and dispatch. Use the same instrumented binary for mode comparisons.
+The legacy `vision_encode` field measures the image insertion call: moving text
+boundaries outside that call changes its partition; compare the new detailed
+fields and end-to-end latency across modes. Graph reservation remains visible
+in stderr; `attention_mode_switches` counts actual per-image toggles, not reserves.
 
 ## C++ API
 

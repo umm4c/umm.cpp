@@ -25,6 +25,9 @@ struct workflow_context {
     std::function<void(conditioning_slot)> transfer_prefix;
     std::function<void(const image_input &, int64_t)> append_latent_image;
     std::function<void(const image_input &)> append_vision_image;
+    std::function<void(const image_input &, bool, bool)> append_u1_prefill_image;
+    bool merge_u1_prefill = true;
+    bool skip_u1_intermediate_logits = true;
 };
 
 class model_workflow {

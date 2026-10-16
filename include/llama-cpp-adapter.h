@@ -1,6 +1,7 @@
 #pragma once
 
 #include "model-registry.h"
+#include "request-metrics.h"
 #include "llama.h"
 #include "ggml-backend.h"
 
@@ -34,12 +35,18 @@ public:
     bool is_end(llama_token token) const;
     void reset();
     void synchronize();
-    void append(const std::vector<llama_token> & tokens);
+    void append(const std::vector<llama_token> & tokens, bool need_logits = true,
+                request_metrics * metrics = nullptr, bool last_chunk_only = false);
     // BAGEL supplies a flat sequence of vision embeddings.
     void append_bagel_image_embeddings(const std::vector<float> & embeddings);
     // SenseNova U1 supplies spatial embeddings with a 2-D image grid.
     void append_u1_image_embeddings(const std::vector<float> & embeddings,
-                                    int grid_width, int grid_height);
+                                    int grid_width, int grid_height,
+                                    bool need_logits = true, request_metrics * metrics = nullptr);
+    // Requires an already appended <img>; the caller supplies </img> when close_image is false.
+    void append_u1_image_body(const std::vector<float> & embeddings,
+                              int grid_width, int grid_height, bool close_image = true,
+                              bool need_logits = true, request_metrics * metrics = nullptr);
     // The <img> token is already present after an image-generation request.
     void append_u1_generated_image_embeddings(const std::vector<float> & embeddings,
                                               int grid_width, int grid_height);
@@ -68,8 +75,6 @@ private:
     std::vector<llama_pos> positions_;
     llama_pos next_position_ = 0;
     bool has_logits_ = false;
-    void append_u1_image_body(const std::vector<float> & embeddings,
-                              int grid_width, int grid_height);
 };
 
 }
