@@ -47,6 +47,7 @@ def main():
     samples = []
     start = time.monotonic()
     child = None
+    pending_signal = None
 
     def sample(stream):
         tick = time.monotonic()
@@ -70,6 +71,8 @@ def main():
             sample(stream)
 
     def forward(signum, _frame):
+        nonlocal pending_signal
+        pending_signal = signum
         if child is not None and child.poll() is None:
             try:
                 os.killpg(child.pid, signum)
@@ -85,13 +88,19 @@ def main():
         thread.start()
         command_start = time.monotonic() - start
         try:
-            child = subprocess.Popen(command, start_new_session=True)
-            returncode = child.wait()
+            if pending_signal is not None:
+                returncode = -pending_signal
+            else:
+                child = subprocess.Popen(command, start_new_session=True)
+                if pending_signal is not None:
+                    forward(pending_signal, None)
+                returncode = child.wait()
         finally:
             command_end = time.monotonic() - start
             stop.set()
             thread.join()
-            sample(stream)
+            if child is not None:
+                sample(stream)
             valid = [r for r in samples if r["process_memory_mb"] is not None]
             during = [r for r in valid if command_start <= r["elapsed_s"] <= command_end]
             boundaries = [command_start] + [r["elapsed_s"] for r in during] + [command_end]
