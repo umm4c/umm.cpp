@@ -90,6 +90,7 @@ json timings(const umm::request_metrics & metrics, clock_type::time_point start)
             {"image_encoder", available(metrics.image_encoder_ms)},
             {"image_prefill", available(metrics.image_prefill_ms)},
             {"text_prefill_compute", available(metrics.text_prefill_compute_ms)},
+            {"mixed_prefill", available(metrics.mixed_prefill_ms)},
             {"text_prefill", available(metrics.text_prefill_ms)},
             {"text_decode", available(metrics.text_decode_ms)},
             {"ttft", available(metrics.ttft_ms)},
@@ -104,16 +105,14 @@ json prefill_metrics(const umm::request_metrics & metrics) {
     if (metrics.prefill_batches.empty()) return nullptr;
     json batches = json::array();
     int64_t outputs = 0;
-    int64_t images = 0;
     for (const auto & batch : metrics.prefill_batches) {
         batches.push_back({{"kind", batch.kind}, {"tokens", batch.tokens},
                            {"cached_tokens", batch.cached_tokens}, {"outputs", batch.outputs},
                            {"elapsed_ms", batch.elapsed_ms}});
         outputs += batch.outputs;
-        images += batch.kind == "image";
     }
     return {{"call_count", batches.size()}, {"logits_rows", outputs},
-            {"attention_mode_switches", 2 * images},
+            {"attention_mode_switches", metrics.attention_mode_switches},
             {"input_hash_algorithm", "fnv1a64-token-position"},
             {"input_hash", std::to_string(metrics.prefill_input_hash)}, {"batches", batches}};
 }

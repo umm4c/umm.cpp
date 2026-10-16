@@ -329,17 +329,24 @@ followed by text items, plus `params.max_new_tokens`. Unsupported inputs return
 a per-case error; model loading errors return `fatal`. Diffusion settings such
 as `--steps`, `--cfg`, and `--shift` are session flags.
 
-U1 understanding accepts `--u1-prefill-mode optimized|baseline|merge|logits`
+U1 understanding accepts `--u1-prefill-mode optimized|baseline|merge|logits|grouped|mixed2|mixed4`
 (default `optimized`). `merge` combines consecutive text and image boundary
 IDs into causal batches; `logits` requests only the final prompt logits;
 `optimized` enables both. Image groups retain their noncausal attention and
-spatial positions. Generation and BAGEL workflows retain their existing paths.
+spatial positions. Experimental `grouped` uses temporal causal attention with
+full visibility within each image and removes attention-mode toggles.
+`mixed2` / `mixed4` additionally combine text and up to 2 / 4 complete images
+within the configured microbatch capacity. Text embedding lookup stays on its
+weight backend; host memory assembles the mixed embeddings. BAGEL retains its
+existing workflow.
 
 Understanding results include `prefill.batches` (kind, token count, cached
 input tokens, logits rows, elapsed milliseconds), aggregate call/logits counts,
 and a batching-independent FNV-1a fingerprint of input IDs and all position axes.
-`image_encoder`, `image_prefill`, and `text_prefill_compute` split encoder and
-LLM execution time. Detailed LLM timers synchronize each batch and include graph
+`image_encoder`, `image_prefill`, `text_prefill_compute`, and `mixed_prefill`
+split encoder and LLM execution time. Mixed batch time includes text embedding
+lookup and assembly; its legacy `vision_encode` contains only image encoding.
+Detailed LLM timers synchronize each batch and include graph
 reservation and dispatch. Use the same instrumented binary for mode comparisons.
 The legacy `vision_encode` field measures the image insertion call: moving text
 boundaries outside that call changes its partition; compare the new detailed

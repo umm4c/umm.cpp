@@ -322,9 +322,19 @@ public:
         engine.reset();
         const bool merge = context.merge_u1_prefill;
         const bool skip_logits = context.skip_u1_intermediate_logits;
+        const bool mixed = context.u1_images_per_prefill > 0;
+        std::vector<u1_prefill_segment> pending_segments;
+        int pending_images = 0;
         std::vector<llama_token> pending_tokens;
         auto flush = [&](bool final) {
-            engine.append(pending_tokens, !skip_logits || final, context.metrics, skip_logits);
+            if (mixed) {
+                if (!pending_tokens.empty()) pending_segments.push_back({std::move(pending_tokens), {}, 0, 0});
+                engine.append_u1_mixed(pending_segments, final, context.metrics);
+                pending_segments.clear();
+                pending_images = 0;
+            } else {
+                engine.append(pending_tokens, !skip_logits || final, context.metrics, skip_logits);
+            }
             pending_tokens.clear();
         };
         auto append_tokens = [&](const std::vector<llama_token> & tokens, bool final = false) {
@@ -342,6 +352,17 @@ public:
                 if (!pending_text.empty()) {
                     append_tokens(engine.tokenize(pending_text));
                     pending_text.clear();
+                }
+                if (mixed) {
+                    if (pending_images == context.u1_images_per_prefill) flush(false);
+                    append_tokens(engine.tokenize("<img>"));
+                    pending_segments.push_back({std::move(pending_tokens), {}, 0, 0});
+                    pending_tokens.clear();
+                    pending_segments.push_back({{}, context.encode_u1_prefill_image(*image),
+                                                 image->width / 32, image->height / 32});
+                    ++pending_images;
+                    append_tokens(engine.tokenize("</img>"));
+                    continue;
                 }
                 if (merge) {
                     append_tokens(engine.tokenize("<img>"));

@@ -22,6 +22,12 @@ docker run --rm --security-opt seccomp=unconfined -v "$PWD:/workspace/umm" \
 
 ## Launch scripts
 
+`--u1-prefill-mode grouped` keeps temporal group attention enabled for U1.5.
+Experimental `mixed2` / `mixed4` combine text and up to 2 / 4 complete image
+groups, within `n_batch` and `n_ubatch`. Token embedding lookup runs on its
+weight backend; embedding rows pass through host memory for batch assembly.
+The default remains `optimized` pending paired quality validation.
+
 ```bash
 # BAGEL text and image
 scripts/ascend/run-bagel.sh text 'Describe Ascend NPU.'

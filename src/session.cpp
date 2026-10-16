@@ -159,7 +159,8 @@ session::impl::impl(model_package package_, const std::string & understanding_ba
                      context_size ? context_size : context_size_for_single_cann_u1(
                          package.family, understanding_backend, generation_backend_),
                      99, false,
-                     understanding_backend, batch_size, microbatch_size),
+                     understanding_backend, batch_size, microbatch_size,
+                     u1_prefill_mode_ == "grouped" || u1_prefill_mode_ == "mixed2" || u1_prefill_mode_ == "mixed4"),
       workflow(create_model_workflow(language_model.family())),
       generation_model(package.component("generation")),
       generation_backend(generation_backend_),
@@ -319,8 +320,22 @@ workflow_context session::impl::workflow_context_for_request() {
     context.append_u1_prefill_image = [this](const image_input & image, bool body_only, bool need_logits) {
         append_native_image(image, body_only, need_logits);
     };
-    context.merge_u1_prefill = u1_prefill_mode == "merge" || u1_prefill_mode == "optimized";
-    context.skip_u1_intermediate_logits = u1_prefill_mode == "logits" || u1_prefill_mode == "optimized";
+    context.encode_u1_prefill_image = [this](const image_input & image) {
+        load_image_engine();
+        const auto start = metrics_clock::now();
+        auto embeddings = encode_u1_image_with_diffusion(image_engine.get(), image);
+        if (active_metrics) {
+            const auto duration = metrics_elapsed_ms(start);
+            active_metrics->image_encoder_ms = std::max(0.0, active_metrics->image_encoder_ms) + duration;
+            active_metrics->vision_encode_ms = std::max(0.0, active_metrics->vision_encode_ms) + duration;
+            active_metrics->vision_tokens += size_t(image.width / 32) * (image.height / 32) + 2;
+        }
+        return embeddings;
+    };
+    context.u1_images_per_prefill = u1_prefill_mode == "mixed2" ? 2 : (u1_prefill_mode == "mixed4" ? 4 : 0);
+    const bool grouped = u1_prefill_mode == "grouped" || context.u1_images_per_prefill;
+    context.merge_u1_prefill = u1_prefill_mode == "merge" || u1_prefill_mode == "optimized" || grouped;
+    context.skip_u1_intermediate_logits = u1_prefill_mode == "logits" || u1_prefill_mode == "optimized" || grouped;
     return context;
 }
 
@@ -335,8 +350,9 @@ session::session(const std::string & model,
                  int context_size, int batch_size, int microbatch_size,
                  const std::string & u1_prefill_mode) {
     if (u1_prefill_mode != "baseline" && u1_prefill_mode != "merge" &&
-        u1_prefill_mode != "logits" && u1_prefill_mode != "optimized") {
-        throw std::invalid_argument("u1_prefill_mode must be baseline, merge, logits or optimized");
+        u1_prefill_mode != "logits" && u1_prefill_mode != "optimized" && u1_prefill_mode != "grouped" &&
+        u1_prefill_mode != "mixed2" && u1_prefill_mode != "mixed4") {
+        throw std::invalid_argument("u1_prefill_mode must be baseline, merge, logits, optimized, grouped, mixed2 or mixed4");
     }
     auto package = resolve_model(model, generation_model);
     ggml_backend_load_all();

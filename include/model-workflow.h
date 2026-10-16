@@ -26,6 +26,8 @@ struct workflow_context {
     std::function<void(const image_input &, int64_t)> append_latent_image;
     std::function<void(const image_input &)> append_vision_image;
     std::function<void(const image_input &, bool, bool)> append_u1_prefill_image;
+    std::function<std::vector<float>(const image_input &)> encode_u1_prefill_image;
+    int u1_images_per_prefill = 0;
     bool merge_u1_prefill = true;
     bool skip_u1_intermediate_logits = true;
 };

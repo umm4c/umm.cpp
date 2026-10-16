@@ -27,7 +27,7 @@ void print_help() {
            "        [--understanding-backend CANN0] [--vision-backend CANN0]\n"
            "        [--generation-backend CANN0] [--generation-max-vram CANN0=40]\n"
            "        [--n-ctx MODEL_DEFAULT] [--n-batch MODEL_DEFAULT] [--n-ubatch MODEL_DEFAULT]\n"
-           "        [--u1-prefill-mode optimized|baseline|merge|logits]\n"
+           "        [--u1-prefill-mode optimized|baseline|merge|logits|grouped|mixed2|mixed4]\n"
            "        [--width MODEL_DEFAULT] [--height MODEL_DEFAULT] [--steps 50]\n"
            "        [--cfg 4] [--image-cfg 1.5] [--shift 3] [--seed 42]\n"
            "        [--vae-tiling 0|1] [--vae-tile-size 64] [--vae-tile-overlap 0.5]\n"

@@ -23,13 +23,21 @@ struct prefix_view {
     std::vector<ggml_tensor *> values;
 };
 
+struct u1_prefill_segment {
+    std::vector<llama_token> tokens;
+    std::vector<float> embeddings;
+    int grid_width = 0;
+    int grid_height = 0;
+};
+
 // Project-level adapter around llama.cpp. It owns the text model/context and
 // exposes only the operations needed by UMM workflows.
 class llama_cpp_adapter {
 public:
     explicit llama_cpp_adapter(const std::string & model_path, int context_size = 0, int gpu_layers = 99,
                                bool full_precision = false, const std::string & backend = "",
-                               int batch_size = 0, int microbatch_size = 0);
+                               int batch_size = 0, int microbatch_size = 0,
+                               bool u1_group_causal = false);
     std::vector<llama_token> tokenize(const std::string & text) const;
     std::string piece(llama_token token) const;
     bool is_end(llama_token token) const;
@@ -47,6 +55,9 @@ public:
     void append_u1_image_body(const std::vector<float> & embeddings,
                               int grid_width, int grid_height, bool close_image = true,
                               bool need_logits = true, request_metrics * metrics = nullptr);
+    // Text supplies <img>/</img>; image segments stay whole within each microbatch.
+    void append_u1_mixed(const std::vector<u1_prefill_segment> & segments, bool need_logits,
+                         request_metrics * metrics = nullptr);
     // The <img> token is already present after an image-generation request.
     void append_u1_generated_image_embeddings(const std::vector<float> & embeddings,
                                               int grid_width, int grid_height);
@@ -66,6 +77,7 @@ public:
     size_t context_capacity() const { return llama_n_ctx(context_.get()); }
 
 private:
+    std::vector<float> token_embeddings(const std::vector<llama_token> & tokens);
     std::string architecture_;
     model_family family_ = model_family::unknown;
     llama_model_kv_override overrides_[2]{};
@@ -75,6 +87,7 @@ private:
     std::vector<llama_pos> positions_;
     llama_pos next_position_ = 0;
     bool has_logits_ = false;
+    bool u1_group_causal_ = false;
 };
 
 }

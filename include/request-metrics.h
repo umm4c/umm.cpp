@@ -34,6 +34,7 @@ struct request_metrics {
     double image_encoder_ms = -1;
     double image_prefill_ms = -1;
     double text_prefill_compute_ms = -1;
+    double mixed_prefill_ms = -1;
     double text_prefill_ms = -1;
     double text_decode_ms = -1;
     double ttft_ms = -1;
@@ -46,6 +47,7 @@ struct request_metrics {
     int64_t output_tokens = -1;
     std::vector<double> diffusion_step_ms;
     std::vector<prefill_batch_metrics> prefill_batches;
+    int64_t attention_mode_switches = 0;
     // FNV-1a over token IDs and all four position axes, independent of batching.
     uint64_t prefill_input_hash = 14695981039346656037ULL;
 };
