@@ -359,6 +359,10 @@ session::session(const std::string & model,
         throw std::invalid_argument("u1_prefill_mode must be baseline, merge, logits, optimized, grouped, mixed2 or mixed4");
     }
     auto package = resolve_model(model, generation_model);
+    if (u1_v_cache_layout == "contiguous" && package.family != model_family::unknown &&
+        package.family != model_family::sensenova_u1) {
+        throw std::invalid_argument("Contiguous V cache is only supported for SenseNova U1");
+    }
     ggml_backend_load_all();
     llama_backend_init();
     sd_set_log_callback(log_stable_diffusion, nullptr);

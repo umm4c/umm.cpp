@@ -80,6 +80,9 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
     if (family_ == model_family::unknown) {
         throw std::runtime_error("Expected a supported understanding GGUF");
     }
+    if (u1_v_cache_contiguous && family_ != model_family::sensenova_u1) {
+        throw std::invalid_argument("Contiguous V cache is only supported for SenseNova U1");
+    }
     const auto & descriptor = model_descriptor_for(family_);
     auto cp = llama_context_default_params();
     if (context_size < 0) throw std::invalid_argument("Context size must be nonnegative");
