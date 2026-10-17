@@ -320,22 +320,63 @@ public:
                                         std::to_string(engine.context_capacity()));
         }
         engine.reset();
-        engine.append(engine.tokenize("<|im_start|>user\n"));
+        const bool merge = context.merge_u1_prefill;
+        const bool skip_logits = context.skip_u1_intermediate_logits;
+        const bool mixed = context.u1_images_per_prefill > 0;
+        std::vector<u1_prefill_segment> pending_segments;
+        int pending_images = 0;
+        std::vector<llama_token> pending_tokens;
+        auto flush = [&](bool final) {
+            if (mixed) {
+                if (!pending_tokens.empty()) pending_segments.push_back({std::move(pending_tokens), {}, 0, 0});
+                engine.append_u1_mixed(pending_segments, final, context.metrics);
+                pending_segments.clear();
+                pending_images = 0;
+            } else {
+                engine.append(pending_tokens, !skip_logits || final, context.metrics, skip_logits);
+            }
+            pending_tokens.clear();
+        };
+        auto append_tokens = [&](const std::vector<llama_token> & tokens, bool final = false) {
+            if (merge) {
+                pending_tokens.insert(pending_tokens.end(), tokens.begin(), tokens.end());
+                if (final) flush(true);
+            } else {
+                engine.append(tokens, !skip_logits || final, context.metrics, skip_logits);
+            }
+        };
+        append_tokens(engine.tokenize("<|im_start|>user\n"));
         std::string pending_text;
         for (const auto & segment : content) {
             if (const auto * image = std::get_if<image_input>(&segment)) {
                 if (!pending_text.empty()) {
-                    engine.append(engine.tokenize(pending_text));
+                    append_tokens(engine.tokenize(pending_text));
                     pending_text.clear();
                 }
-                context.append_vision_image(*image);
+                if (mixed) {
+                    if (pending_images == context.u1_images_per_prefill) flush(false);
+                    append_tokens(engine.tokenize("<img>"));
+                    pending_segments.push_back({std::move(pending_tokens), {}, 0, 0});
+                    pending_tokens.clear();
+                    pending_segments.push_back({{}, context.encode_u1_prefill_image(*image),
+                                                 image->width / 32, image->height / 32});
+                    ++pending_images;
+                    append_tokens(engine.tokenize("</img>"));
+                    continue;
+                }
+                if (merge) {
+                    append_tokens(engine.tokenize("<img>"));
+                    flush(false);
+                }
+                context.append_u1_prefill_image(*image, merge, !skip_logits);
+                if (merge) append_tokens(engine.tokenize("</img>"));
             } else {
                 pending_text += std::get<std::string>(segment);
             }
         }
-        engine.append(engine.tokenize(pending_text + "<|im_end|>\n<|im_start|>assistant\n"));
+        append_tokens(engine.tokenize(pending_text + "<|im_end|>\n<|im_start|>assistant\n"));
         if (think) {
-            engine.append(engine.tokenize("<think>\n"));
+            append_tokens(engine.tokenize("<think>\n"), true);
             begin_text_decode(context);
             for (int i = 0; i < max_tokens; ++i) {
                 const auto token = engine.greedy();
@@ -348,7 +389,7 @@ public:
             }
             engine.append(engine.tokenize("\n\n"));
         } else {
-            engine.append(engine.tokenize("<think>\n\n</think>\n\n"));
+            append_tokens(engine.tokenize("<think>\n\n</think>\n\n"), true);
             begin_text_decode(context);
         }
         std::string result;

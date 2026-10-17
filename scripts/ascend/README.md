@@ -22,6 +22,23 @@ docker run --rm --security-opt seccomp=unconfined -v "$PWD:/workspace/umm" \
 
 ## Launch scripts
 
+### Process memory sampling
+
+`monitor-command.py --card 32 --output DIR -- COMMAND ...` runs a command and
+samples process memory on one exclusive card. Run it in the inference container,
+with `/dev/davinci_manager`, `/dev/hisi_hdc`, `/dev/devmm_svm`, the selected NPU,
+the driver directory and `/usr/local/bin/npu-smi` mounted. Include the driver
+`lib64/common` and `lib64/driver` directories in `LD_LIBRARY_PATH`.
+`memory.jsonl` records samples and errors; `summary.json` records peak MB,
+sample counts, maximum valid gap and coverage status. The peak sums device
+processes and excludes driver memory. An unavailable measurement is `null`.
+
+`--u1-prefill-mode grouped` keeps temporal group attention enabled for U1.5.
+Experimental `mixed2` / `mixed4` combine text and up to 2 / 4 complete image
+groups, within `n_batch` and `n_ubatch`. Token embedding lookup runs on its
+weight backend; embedding rows pass through host memory for batch assembly.
+The default remains `optimized` pending paired quality validation.
+
 ```bash
 # BAGEL text and image
 scripts/ascend/run-bagel.sh text 'Describe Ascend NPU.'
