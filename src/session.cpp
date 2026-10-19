@@ -136,7 +136,7 @@ struct session::impl {
     impl(model_package package_, const std::string & understanding_backend,
          const std::string & generation_backend_, const std::string & generation_max_vram_,
          const std::string & vision_backend_, int context_size, int batch_size, int microbatch_size,
-         const std::string & u1_prefill_mode_);
+         const std::string & u1_prefill_mode_, const std::string & u1_v_cache_layout);
 
     void load_image_engine();
     void append_image(const image_input & image);
@@ -153,14 +153,15 @@ struct session::impl {
 session::impl::impl(model_package package_, const std::string & understanding_backend,
                     const std::string & generation_backend_, const std::string & generation_max_vram_,
                     const std::string & vision_backend_, int context_size, int batch_size, int microbatch_size,
-                    const std::string & u1_prefill_mode_)
+                    const std::string & u1_prefill_mode_, const std::string & u1_v_cache_layout)
     : package(std::move(package_)),
       language_model(package.component("understanding"),
                      context_size ? context_size : context_size_for_single_cann_u1(
                          package.family, understanding_backend, generation_backend_),
                      99, false,
                      understanding_backend, batch_size, microbatch_size,
-                     u1_prefill_mode_ == "grouped" || u1_prefill_mode_ == "mixed2" || u1_prefill_mode_ == "mixed4"),
+                     u1_prefill_mode_ == "grouped" || u1_prefill_mode_ == "mixed2" || u1_prefill_mode_ == "mixed4",
+                     u1_v_cache_layout == "contiguous"),
       workflow(create_model_workflow(language_model.family())),
       generation_model(package.component("generation")),
       generation_backend(generation_backend_),
@@ -348,19 +349,26 @@ session::session(const std::string & model,
                  const std::string & generation_max_vram,
                  const std::string & vision_backend,
                  int context_size, int batch_size, int microbatch_size,
-                 const std::string & u1_prefill_mode) {
+                 const std::string & u1_prefill_mode, const std::string & u1_v_cache_layout) {
+    if (u1_v_cache_layout != "default" && u1_v_cache_layout != "contiguous") {
+        throw std::invalid_argument("u1_v_cache_layout must be default or contiguous");
+    }
     if (u1_prefill_mode != "baseline" && u1_prefill_mode != "merge" &&
         u1_prefill_mode != "logits" && u1_prefill_mode != "optimized" && u1_prefill_mode != "grouped" &&
         u1_prefill_mode != "mixed2" && u1_prefill_mode != "mixed4") {
         throw std::invalid_argument("u1_prefill_mode must be baseline, merge, logits, optimized, grouped, mixed2 or mixed4");
     }
     auto package = resolve_model(model, generation_model);
+    if (u1_v_cache_layout == "contiguous" && package.family != model_family::unknown &&
+        package.family != model_family::sensenova_u1) {
+        throw std::invalid_argument("Contiguous V cache is only supported for SenseNova U1");
+    }
     ggml_backend_load_all();
     llama_backend_init();
     sd_set_log_callback(log_stable_diffusion, nullptr);
     impl_ = std::make_unique<impl>(std::move(package), understanding_backend, generation_backend,
                                   generation_max_vram, vision_backend,
-                                  context_size, batch_size, microbatch_size, u1_prefill_mode);
+                                  context_size, batch_size, microbatch_size, u1_prefill_mode, u1_v_cache_layout);
 }
 
 session::~session() = default;

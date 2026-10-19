@@ -340,6 +340,12 @@ within the configured microbatch capacity. Text embedding lookup stays on its
 weight backend; host memory assembles the mixed embeddings. BAGEL retains its
 existing workflow.
 
+U1 also accepts experimental `--u1-v-cache-layout default|contiguous`
+(default `default`). `contiguous` writes complete V cache rows without changing
+the attention implementation selection. CANN uses ordinary attention with
+FlashAttention disabled. The selected layout appears in
+`ready.runtime_identity.policy.u1_v_cache_layout`.
+
 Understanding results include `prefill.batches` (kind, token count, cached
 input tokens, logits rows, elapsed milliseconds), aggregate call/logits counts,
 and a batching-independent FNV-1a fingerprint of input IDs and all position axes.

@@ -39,7 +39,7 @@ std::map<std::string, std::string> parse_options(int argc, char ** argv) {
         {"--steps", true}, {"--cfg", true}, {"--image-cfg", true}, {"--shift", true},
         {"--vae-tiling", true}, {"--vae-tile-size", true}, {"--vae-tile-overlap", true},
         {"--n-ctx", true}, {"--n-batch", true}, {"--n-ubatch", true},
-        {"--u1-prefill-mode", true},
+        {"--u1-v-cache-layout", true}, {"--u1-prefill-mode", true},
     };
     for (const auto & item : options) {
         if (!allowed.count(item.first)) {
@@ -187,7 +187,8 @@ json runtime_identity(const std::string & model,
                                       "automatic_backend" : "explicit_backend"},
                         {"strict_accelerator", strict != nullptr},
                         {"generation_max_vram", option(options, "--generation-max-vram")},
-                        {"u1_prefill_mode", option(options, "--u1-prefill-mode", "optimized")}}},
+                        {"u1_prefill_mode", option(options, "--u1-prefill-mode", "optimized")},
+                        {"u1_v_cache_layout", option(options, "--u1-v-cache-layout", "default")}}},
             {"build", {{"umm", UMM_BUILD_COMMIT},
                        {"llama_cpp", UMM_LLAMA_COMMIT},
                        {"stable_diffusion_cpp", UMM_SD_COMMIT},
@@ -332,7 +333,8 @@ int main(int argc, char ** argv) {
                              std::stoi(option(options, "--n-ctx", "0")),
                              std::stoi(option(options, "--n-batch", "0")),
                              std::stoi(option(options, "--n-ubatch", "0")),
-                             option(options, "--u1-prefill-mode", "optimized"));
+                             option(options, "--u1-prefill-mode", "optimized"),
+                             option(options, "--u1-v-cache-layout", "default"));
         json ready = {{"type", "ready"}, {"protocol", "umm-session/v1"},
                       {"cold_start_ms", elapsed_ms(startup_start)},
                       {"model", model}, {"options", options},
