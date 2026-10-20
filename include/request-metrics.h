@@ -45,6 +45,7 @@ struct request_metrics {
     int64_t input_tokens = -1;
     int64_t vision_tokens = 0;
     int64_t output_tokens = -1;
+    std::string finish_reason = "stop";
     std::vector<double> diffusion_step_ms;
     std::vector<prefill_batch_metrics> prefill_batches;
     int64_t attention_mode_switches = 0;

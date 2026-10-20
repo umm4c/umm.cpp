@@ -377,27 +377,41 @@ bool session::supports(model_capability capability) const {
     return impl_->package.supports(impl_->language_model.family(), capability);
 }
 
-std::string session::text(const std::string & prompt, int max_tokens) {
-    if (max_tokens < 1) {
-        throw std::invalid_argument("max_tokens must be positive");
-    }
-
+std::string session::text(const std::string & prompt, int max_tokens, request_metrics * metrics) {
+    if (max_tokens < 1) throw std::invalid_argument("max_tokens must be positive");
+    active_metric_scope binding(impl_->active_metrics, metrics);
     auto & engine = impl_->language_model;
     engine.reset();
-    engine.append(engine.tokenize(impl_->workflow->text_prompt(prompt)));
-
+    const auto tokens = engine.tokenize(impl_->workflow->text_prompt(prompt));
+    if (tokens.size() + size_t(max_tokens) > engine.context_capacity()) throw std::invalid_argument("Text and output reserve exceed context capacity");
+    const auto start = metrics_clock::now();
+    engine.append(tokens, true, metrics);
+    if (metrics) {
+        metrics->text_prefill_ms = metrics_elapsed_ms(start);
+        metrics->input_tokens = engine.tokens().size();
+        metrics->output_tokens = 0;
+        metrics->decode_start = metrics_clock::now();
+        metrics->finish_reason = "length";
+    }
     std::string result;
     for (int i = 0; i < max_tokens; ++i) {
         const auto token = engine.greedy();
         if (engine.is_end(token)) {
+            if (metrics) metrics->finish_reason = "stop";
             break;
         }
         const auto piece = engine.piece(token);
-        if (piece == "<img>") {
-            throw std::runtime_error("The model requested image output during a text-only request");
+        if (piece == "<img>") throw std::runtime_error("The model requested image output during a text-only request");
+        if (metrics) {
+            if (metrics->ttft_ms < 0) metrics->ttft_ms = metrics_elapsed_ms(metrics->request_start);
+            ++metrics->output_tokens;
         }
         result += piece;
         engine.append({token});
+    }
+    if (metrics) {
+        engine.synchronize();
+        metrics->text_decode_ms = metrics_elapsed_ms(metrics->decode_start);
     }
     return result;
 }
