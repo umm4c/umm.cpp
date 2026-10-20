@@ -1,0 +1,14 @@
+# Build context: artifacts/runtime/cann310p-20261020 (prepared by rebuild-runtime.sh).
+ARG BASE_IMAGE=umm-cann-base:8.5.0-310p-20261020
+FROM ${BASE_IMAGE}
+LABEL org.umm.environment="cann310p-runtime-20261020" \
+      org.umm.purpose="C++ build/inference and benchmark runtime"
+COPY requirements-cann-runtime.lock /opt/umm-environment/requirements.lock
+COPY wheels /opt/umm-environment/wheels
+COPY runtime-entrypoint.sh /opt/umm-environment/runtime-entrypoint.sh
+RUN python3 -m pip install --progress-bar off --require-hashes --no-index --no-deps --no-cache-dir \
+        --find-links=/opt/umm-environment/wheels -r /opt/umm-environment/requirements.lock \
+    && python3 -m pip freeze --all > /opt/umm-environment/python-freeze.txt
+WORKDIR /workspace/umm
+ENTRYPOINT ["/bin/bash", "/opt/umm-environment/runtime-entrypoint.sh"]
+CMD ["bash"]
