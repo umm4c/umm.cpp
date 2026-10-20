@@ -6,7 +6,7 @@ expected=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["imag
     printf 'Runtime Image ID differs from the recorded environment.\n' >&2; exit 1;
 }
 docker run --rm -i --network none --security-opt seccomp=unconfined \
-    umm-cann:8.5.0-mvp bash -lc 'test "$(umask)" = 0022; exec python3 -' <<'PY'
+    umm-cann:8.5.0-mvp bash -lc 'test "$(umask)" = 0022 && exec python3 -' <<'PY'
 import importlib
 import importlib.metadata
 import json
