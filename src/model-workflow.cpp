@@ -33,7 +33,8 @@ void begin_text_decode(workflow_context & context) {
 
 void note_text_token(workflow_context & context, bool end) {
     auto * metrics = context.metrics;
-    if (!metrics || end) return;
+    if (!metrics) return;
+    if (end) { metrics->finish_reason = "stop"; return; }
     if (metrics->ttft_ms < 0) metrics->ttft_ms = metrics_elapsed_ms(metrics->request_start);
     ++metrics->output_tokens;
 }
@@ -228,6 +229,7 @@ std::string decode_bagel_answer(workflow_context & context, int max_tokens, bool
     auto & engine = context.language_model;
     std::string result;
     bool in_reasoning = false;
+    if (context.metrics) context.metrics->finish_reason = "length";
     for (int i = 0; i < max_tokens; ++i) {
         const auto token = engine.greedy();
         const auto piece = engine.piece(token);
@@ -393,6 +395,7 @@ public:
             begin_text_decode(context);
         }
         std::string result;
+        if (context.metrics) context.metrics->finish_reason = "length";
         for (int i = 0; i < max_tokens; ++i) {
             const auto token = engine.greedy();
             note_text_token(context, engine.is_end(token));

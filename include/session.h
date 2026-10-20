@@ -65,7 +65,7 @@ public:
     session & operator=(const session &) = delete;
 
     bool supports(model_capability capability) const;
-    std::string text(const std::string & prompt, int max_tokens = 256);
+    std::string text(const std::string & prompt, int max_tokens = 256, request_metrics * metrics = nullptr);
     std::string understand(const image_input & image, const std::string & prompt,
                            int max_tokens = 256, bool think = false, request_metrics * metrics = nullptr);
     std::string understand_sequence(const std::vector<understanding_segment> & content,
