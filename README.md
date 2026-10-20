@@ -302,6 +302,47 @@ Model-specific defaults:
 - Text and image modes share the same CLI format. Interleaved generation is
   currently specific to SenseNova U1.5.
 
+### HTTP service and runtime metrics
+
+`umm-server` shares the persistent execution layer with `umm-session`. Each
+process runs one inference at a time; concurrent inference requests receive 429.
+Health and metrics queries remain available during inference.
+
+```sh
+export UMM_API_KEY=local-test-key
+build/bin/umm-server --model /path/to/package \
+  --understanding-backend CANN0 --generation-backend CANN0 \
+  --n-ctx 8192 --n-batch 4096 --n-ubatch 4096 \
+  --steps 8 --cfg 1 --shift 3 --port 8080 --api-key-env UMM_API_KEY \
+  --request-log /absolute/path/requests.jsonl \
+  --system-samples /absolute/path/samples.jsonl
+```
+
+The default model alias is `u15` (`--served-model-name` overrides it). Routes:
+
+- `POST /v1/chat/completions`: one user message, text or ordered text/image
+  content, PNG/JPEG base64 data URLs, nonstreaming greedy decoding. Supports
+  `max_completion_tokens` or `max_tokens` and `temperature=0`.
+- `POST /v1/images/generations`: `n=1`, PNG `b64_json`, sizes up to 2048 per
+  dimension in multiples of 32; `umm_options` accepts seed, steps, cfg and shift.
+- `GET /v1/models`, `/health`, `/ready`, `/umm/info` and `/metrics`.
+
+Unsupported parameters return an input error. The listener defaults to localhost.
+Component SHA256 hashes are computed before listening; `--hash-model 0` skips
+component hashing. Use separate task capacity profiles for large multimodal
+prefill and image generation. Configure OpenAI clients with `max_retries=0`.
+
+`/metrics` exports Prometheus counters, gauges and histograms with seconds, bytes
+and utilization ratios. JSONL responses include `system_metrics`; HTTP detail is
+saved in the request log and joined using `X-Request-ID`. Default monitoring
+samples host RSS, single-visible-NPU process memory and device utilization every
+two seconds. CANN builds with the optional transfer extension also report explicit
+H2D/D2H/D2D submissions. These counters describe runtime copies, rather than
+hardware bus traffic. Missing samples retain availability/coverage information;
+sampling errors allow inference to continue. `--monitoring 0` disables monitoring.
+`umm-session --metrics-port PORT` enables the same read-only exporter alongside
+JSONL. A disconnected client leaves submitted computation running to completion.
+
 ### Persistent structured session
 
 `umm-session` loads a model package once and exchanges newline-delimited JSON on
