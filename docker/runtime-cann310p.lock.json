@@ -1,0 +1,51 @@
+{
+  "schema_version": "umm-runtime-environment/v1",
+  "date": "2026-10-20",
+  "platform": "linux/arm64",
+  "soc": "Ascend310P3",
+  "cann": "8.5.0",
+  "python": "3.11.14",
+  "cmake": "3.27.9",
+  "gcc": "12.3.1",
+  "image": "umm-cann:8.5.0-310p-runtime-20261020",
+  "compatibility_tag": "umm-cann:8.5.0-mvp",
+  "image_id": "sha256:8d9a763fb39a70b80540dd88e0129a59aa05c6dbf7bbf5a9d24452860f3ffd88",
+  "base_image": "umm-cann-base:8.5.0-310p-20261020",
+  "base_image_id": "sha256:7c5790b80ec63ac20e91d7f587a3cfb42cc0d282bc6c8f5dcc4d654d25fa0068",
+  "base_source_tag": "quay.io/ascend/cann:8.5.0-310p-openeuler24.03-py3.11",
+  "scope": "C++ build/inference/benchmark; excludes PyTorch conversion/reference",
+  "required_runtime_options": [
+    "--security-opt=seccomp=unconfined"
+  ],
+  "output_umask": "022",
+  "protection_container": {
+    "name": "umm-cann-runtime-keep",
+    "state": "created",
+    "label": "umm.environment.keep=true"
+  },
+  "files_sha256": {
+    "Dockerfile.cann-runtime": "60a51a9d908206d8a080486fd62588f45fd56446de3a10712da6fc71628794ae",
+    "runtime-entrypoint.sh": "58b0ef9e173f1ebc6c7c1a2cbfed496bb10410d4514148a18d6dd7ece910347e",
+    "requirements-cann-runtime.lock": "0869ef359da0ab6db92d9291b2130d9961ebb7a17734ea267e5c00910f91e47e"
+  },
+  "local_bundle": "artifacts/runtime/cann310p-20261020",
+  "archive": "umm-cann-runtime-20261020.tar.gz",
+  "verification": {
+    "dependency_versions": 19,
+    "vendor_metadata_stdlib_notices": [
+      "getopt",
+      "inspect",
+      "multiprocessing"
+    ],
+    "cmake_cpp_build_and_run": "passed",
+    "single_physical_npu": "2",
+    "textvqa_output_and_tokens": "identical_to_previous",
+    "wise_1024_8step_png_and_tokens": "identical_to_previous",
+    "container_signal_forwarding": "passed",
+    "host_readable_monitoring_logs": "0644",
+    "gzip_integrity": "passed",
+    "offline_restore_same_image_id": "passed"
+  },
+  "archive_bytes": 4594827445,
+  "archive_sha256": "dd5137a73f90d906cab92dd056104d0f8a93d5f72f52170fe3a95d39a57370ff"
+}

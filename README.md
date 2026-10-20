@@ -108,7 +108,7 @@ For Ascend 310P, build the supplied CANN image and compile with both engines
 using the CANN backend:
 
 ```sh
-docker build -f docker/Dockerfile.cann-mvp -t umm-cann:8.5.0-mvp docker
+./docker/rebuild-runtime.sh --download
 docker run --rm --security-opt seccomp=unconfined \
   --user "$(id -u):$(id -g)" -v "$PWD:/workspace/umm" \
   umm-cann:8.5.0-mvp bash -lc '
@@ -117,6 +117,11 @@ docker run --rm --security-opt seccomp=unconfined \
     cmake --build build-cann -j 8
   '
 ```
+
+The pinned runtime, offline backup/restore commands and image protection container
+are documented in [`docker/README.runtime.md`](docker/README.runtime.md).
+This image contains the C++ toolchain and runtime; model conversion dependencies
+are installed separately as described below.
 
 ### Prepare a model package
 

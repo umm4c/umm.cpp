@@ -5,6 +5,10 @@ The four model-facing scripts run the validated CANN build inside
 the selected output directory read-write, pass through the requested Ascend
 devices, and enable `GGML_SCHED_STRICT_ACCEL=1` by default.
 
+The fixed image definition and offline recovery commands are in
+[`docker/README.runtime.md`](../../docker/README.runtime.md). Keep the unstarted
+`umm-cann-runtime-keep` container when cleaning temporary containers.
+
 U1.5 defaults to `build-cann-rebase`; set `BUILD_DIR` to another validated
 build when needed. U1.5 supports text, image, and
 interleaved text/image generation. BAGEL understanding and editing require the
