@@ -24,5 +24,8 @@ if [[ ${mode} == interleave || ${mode} == think-interleave ]]; then
 else
     export WIDTH=${WIDTH:-1024} HEIGHT=${HEIGHT:-1024} STEPS=${STEPS:-8} CFG=${CFG:-1}
 fi
+export U1_PREFILL_MODE=${U1_PREFILL_MODE:-mixed4}
+export U1_V_CACHE_LAYOUT=${U1_V_CACHE_LAYOUT:-contiguous}
+export N_CTX=${N_CTX:-2048} N_BATCH=${N_BATCH:-512} N_UBATCH=${N_UBATCH:-256}
 ascend_validate_mode "${mode}"
 ascend_benchmark u15 "${script_dir}/run-u15.sh" "${mode}" "${prompt}" "${input}"

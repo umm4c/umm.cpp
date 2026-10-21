@@ -28,6 +28,9 @@ ascend_benchmark() {
         printf 'model=%s\nmode=%s\nprompt=%s\nrepeats=%s\nwarmup=%s\n' \
             "${model_name}" "${mode}" "${prompt}" "${repeats}" "${warmup}"
         env | LC_ALL=C sort | grep -E '^(MODEL_DIR|BUILD_DIR|DOCKER_IMAGE|DEVICES|STRICT_ACCEL|UNDERSTANDING_BACKEND|VISION_BACKEND|GENERATION_BACKEND|GENERATION_MAX_VRAM|WIDTH|HEIGHT|STEPS|CFG|IMAGE_CFG|SHIFT|SEED|MAX_TOKENS|MAX_IMAGES|VAE_TILING|VAE_TILE_SIZE|VAE_TILE_OVERLAP)=' || true
+        if [[ ${model_name} == u15 ]]; then
+            env | LC_ALL=C sort | grep -E '^(N_CTX|N_BATCH|N_UBATCH|U1_PREFILL_MODE|U1_V_CACHE_LAYOUT)=' || true
+        fi
     } >"${result_dir}/configuration.txt"
     npu-smi info >"${result_dir}/npu-before.txt"
 
