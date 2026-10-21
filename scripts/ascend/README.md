@@ -37,15 +37,18 @@ the driver directory and `/usr/local/bin/npu-smi` mounted. Include the driver
 sample counts, maximum valid gap and coverage status. The peak sums device
 processes and excludes driver memory. An unavailable measurement is `null`.
 
-`--u1-prefill-mode grouped` keeps temporal group attention enabled for U1.5.
-Experimental `mixed2` / `mixed4` combine text and up to 2 / 4 complete image
-groups, within `n_batch` and `n_ubatch`. Token embedding lookup runs on its
-weight backend; embedding rows pass through host memory for batch assembly.
-The default remains `optimized` pending paired quality validation.
+U1.5 manual runners explicitly use `--u1-prefill-mode mixed4` and
+`--u1-v-cache-layout contiguous`. Override them with `U1_PREFILL_MODE` and
+`U1_V_CACHE_LAYOUT`; benchmark records include both settings and batch capacity.
+`mixed4` merges text and up to four complete image groups within batch limits.
+Pure text-to-image uses the text prefix path, so it does not need image grouping.
 
-CLI and session accept experimental `--u1-v-cache-layout contiguous` for
-row-wise V cache updates. The default layout remains unchanged. This option
-is limited to SenseNova and can be combined with `mixed4`.
+Direct CLI/session/server calls retain the generic `optimized/default` defaults
+for compatibility. For SenseNova on Ascend, pass both options explicitly; the
+benchmark task configs already do so. These options are SenseNova-specific.
+For direct CANN calls, use `--u1-prefill-mode mixed4 --u1-v-cache-layout contiguous` with the task capacity: understanding
+`8192/4096/4096`, long-context `32768/1152/1152`. The manual image/interleave
+runner retains `2048/512/256`.
 
 ```bash
 # BAGEL text and image
