@@ -5,6 +5,7 @@
 #include "session.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -25,7 +26,7 @@ void print_help() {
            "        MODE: text|image|think-image|interleave|think-interleave|understand|think-understand|edit|think-edit\n"
            "        [--input image.png] [--output image.png] [--max-tokens 256] [--max-images 2]\n"
            "        [--understanding-backend CANN0] [--vision-backend CANN0]\n"
-           "        [--generation-backend CANN0] [--generation-max-vram CANN0=40]\n"
+           "        [--generation-backend CANN0] [--generation-max-vram CANN0=40] [--cann-q8-nz 0|1]\n"
            "        [--n-ctx MODEL_DEFAULT] [--n-batch MODEL_DEFAULT] [--n-ubatch MODEL_DEFAULT]\n"
            "        [--u1-v-cache-layout default|contiguous]\n"
            "        [--u1-prefill-mode optimized|baseline|merge|logits|grouped|mixed2|mixed4]\n"
@@ -55,7 +56,7 @@ option_map parse_arguments(int argc, char ** argv) {
         "--vae-tiling", "--vae-tile-size", "--vae-tile-overlap",
         "--understanding-backend", "--vision-backend", "--generation-backend", "--generation-max-vram",
         "--n-ctx", "--n-batch", "--n-ubatch",
-        "--u1-v-cache-layout", "--u1-prefill-mode",
+        "--u1-v-cache-layout", "--u1-prefill-mode", "--cann-q8-nz",
     };
     for (const auto & entry : args) {
         if (std::find(known.begin(), known.end(), entry.first) == known.end()) {
@@ -130,6 +131,12 @@ int run(int argc, char ** argv) {
     };
     if (std::find(modes.begin(), modes.end(), mode) == modes.end())
         throw std::invalid_argument("Unsupported mode: " + mode);
+
+    if (args.count("--cann-q8-nz")) {
+        const auto & enabled = args.at("--cann-q8-nz");
+        if (enabled != "0" && enabled != "1") throw std::invalid_argument("cann-q8-nz must be 0 or 1");
+        if (setenv("GGML_CANN_Q8_NZ", enabled.c_str(), 1)) throw std::runtime_error("Could not configure CANN Q8 layout");
+    }
 
     umm::session session(model, "", value(args, "--understanding-backend"),
                          value(args, "--generation-backend"), value(args, "--generation-max-vram"),
