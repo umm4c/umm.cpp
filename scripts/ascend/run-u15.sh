@@ -17,7 +17,7 @@ Common overrides:
   MODEL_DIR, BUILD_DIR, DOCKER_IMAGE, DEVICES, OUTPUT, STRICT_ACCEL
   UNDERSTANDING_BACKEND, GENERATION_BACKEND, GENERATION_MAX_VRAM,
   WIDTH, HEIGHT, STEPS, CFG, SHIFT, SEED, N_CTX, N_BATCH, N_UBATCH,
-  MAX_TOKENS, MAX_IMAGES, U1_PREFILL_MODE, U1_V_CACHE_LAYOUT
+  MAX_TOKENS, MAX_IMAGES, U1_PREFILL_MODE, U1_V_CACHE_LAYOUT, CANN_Q8_NZ
 EOF
 }
 
@@ -55,6 +55,7 @@ n_batch=${N_BATCH:-512}
 n_ubatch=${N_UBATCH:-256}
 prefill_mode=${U1_PREFILL_MODE:-mixed4}
 v_cache_layout=${U1_V_CACHE_LAYOUT:-contiguous}
+cann_q8_nz=${CANN_Q8_NZ:-1}
 if [[ ${mode} == interleave || ${mode} == think-interleave ]]; then
     output=${OUTPUT:-${ASCEND_PROJECT_ROOT}/outputs/u15-v2-${mode}-${width}x${height}-${steps}step}
 else
@@ -68,7 +69,8 @@ fi
 
 args=(--mode "${mode}" --prompt "${prompt}" --understanding-backend "${understanding_backend}"
       --n-ctx "${n_ctx}" --n-batch "${n_batch}" --n-ubatch "${n_ubatch}"
-      --u1-prefill-mode "${prefill_mode}" --u1-v-cache-layout "${v_cache_layout}")
+      --u1-prefill-mode "${prefill_mode}" --u1-v-cache-layout "${v_cache_layout}"
+      --cann-q8-nz "${cann_q8_nz}")
 case "${mode}" in
     text)
         args+=(--max-tokens "${max_tokens}")

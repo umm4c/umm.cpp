@@ -7,6 +7,8 @@
 #include "session.h"
 #include "runtime-support.h"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -40,7 +42,7 @@ std::map<std::string, std::string> parse_options(int argc, char ** argv) {
         {"--steps", true}, {"--cfg", true}, {"--image-cfg", true}, {"--shift", true},
         {"--vae-tiling", true}, {"--vae-tile-size", true}, {"--vae-tile-overlap", true},
         {"--n-ctx", true}, {"--n-batch", true}, {"--n-ubatch", true},
-        {"--u1-v-cache-layout", true}, {"--u1-prefill-mode", true},
+        {"--u1-v-cache-layout", true}, {"--u1-prefill-mode", true}, {"--cann-q8-nz", true},
         {"--monitoring", true}, {"--monitor-interval", true}, {"--system-samples", true},
         {"--request-log", true}, {"--metrics-port", true}, {"--host", true},
         {"--port", true}, {"--served-model-name", true}, {"--api-key-env", true}, {"--hash-model", true},
@@ -172,6 +174,11 @@ json runtime_identity(const std::string & model,
     }
     const auto strict = std::getenv("GGML_SCHED_STRICT_ACCEL");
     const auto physical_device = std::getenv("UMM_PHYSICAL_DEVICE");
+    const auto q8_env = std::getenv("GGML_CANN_Q8_NZ");
+    std::string q8_layout = q8_env ? q8_env : "off";
+    std::transform(q8_layout.begin(), q8_layout.end(), q8_layout.begin(), [](unsigned char ch) { return std::tolower(ch); });
+    const bool q8_nz = q8_layout == "on" || q8_layout == "1" || q8_layout == "yes" ||
+                       q8_layout == "y" || q8_layout == "enable" || q8_layout == "true";
     return {{"architecture", package.architecture},
             {"weights", weights},
             {"merged_lora", merged_lora},
@@ -185,7 +192,8 @@ json runtime_identity(const std::string & model,
                         {"strict_accelerator", strict != nullptr},
                         {"generation_max_vram", option(options, "--generation-max-vram")},
                         {"u1_prefill_mode", option(options, "--u1-prefill-mode", "optimized")},
-                        {"u1_v_cache_layout", option(options, "--u1-v-cache-layout", "default")}}},
+                        {"u1_v_cache_layout", option(options, "--u1-v-cache-layout", "default")},
+                        {"cann_q8_nz", q8_nz}}},
             {"build", {{"umm", UMM_BUILD_COMMIT},
                        {"llama_cpp", UMM_LLAMA_COMMIT},
                        {"stable_diffusion_cpp", UMM_SD_COMMIT},

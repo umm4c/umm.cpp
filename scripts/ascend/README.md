@@ -38,15 +38,15 @@ sample counts, maximum valid gap and coverage status. The peak sums device
 processes and excludes driver memory. An unavailable measurement is `null`.
 
 U1.5 manual runners explicitly use `--u1-prefill-mode mixed4` and
-`--u1-v-cache-layout contiguous`. Override them with `U1_PREFILL_MODE` and
-`U1_V_CACHE_LAYOUT`; benchmark records include both settings and batch capacity.
+`--u1-v-cache-layout contiguous`, plus `--cann-q8-nz 1`. Override them with `U1_PREFILL_MODE`,
+`U1_V_CACHE_LAYOUT` and `CANN_Q8_NZ` (0 or 1); benchmark records include these settings and batch capacity.
 `mixed4` merges text and up to four complete image groups within batch limits.
 Pure text-to-image uses the text prefix path, so it does not need image grouping.
 
 Direct CLI/session/server calls retain the generic `optimized/default` defaults
 for compatibility. For SenseNova on Ascend, pass both options explicitly; the
-benchmark task configs already do so. These options are SenseNova-specific.
-For direct CANN calls, use `--u1-prefill-mode mixed4 --u1-v-cache-layout contiguous` with the task capacity: understanding
+benchmark task configs already do so. The prefill and cache options are SenseNova-specific. Q8 NZ keeps W8A16 precision and one resident weight payload; its backend default is off, and BAGEL profiles do not enable it.
+For direct CANN calls, use `--u1-prefill-mode mixed4 --u1-v-cache-layout contiguous --cann-q8-nz 1` with the task capacity: understanding
 `8192/4096/4096`, long-context `32768/1152/1152`. The manual image/interleave
 runner retains `2048/512/256`.
 
