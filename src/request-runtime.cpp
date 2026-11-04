@@ -1,4 +1,5 @@
 #include "image-io.h"
+#include "execution-policy.h"
 #include "build-identity.h"
 #include "ggml-backend.h"
 #include "gguf.h"
@@ -37,6 +38,7 @@ std::map<std::string, std::string> parse_options(int argc, char ** argv) {
         }
     }
     static const std::map<std::string, bool> allowed = {
+        {"--execution-policy", true}, {"--rpc-endpoint", true}, {"--local-device", true},
         {"--model", true}, {"--understanding-backend", true}, {"--vision-backend", true},
         {"--generation-backend", true}, {"--generation-max-vram", true},
         {"--steps", true}, {"--cfg", true}, {"--image-cfg", true}, {"--shift", true},
@@ -186,7 +188,10 @@ json runtime_identity(const std::string & model,
                            {"understanding", backend_devices(option(options, "--understanding-backend"))},
                            {"generation", backend_devices(option(options, "--generation-backend"))},
                            {"vision", backend_devices(option(options, "--vision-backend"))}}},
-            {"policy", {{"mode", option(options, "--understanding-backend").empty() &&
+            {"transport", {{"kind", option(options, "--execution-policy") == "remote_910b" ? "rpc" : "local"},
+                            {"endpoint", option(options, "--rpc-endpoint")},
+                            {"remote_metrics", option(options, "--execution-policy") == "remote_910b" ? "collected_on_worker" : "not_applicable"}}},
+            {"policy", {{"static_policy", option(options, "--execution-policy")}, {"mode", option(options, "--understanding-backend").empty() &&
                                   option(options, "--generation-backend").empty() ?
                                       "automatic_backend" : "explicit_backend"},
                         {"strict_accelerator", strict != nullptr},

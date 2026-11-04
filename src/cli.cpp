@@ -1,4 +1,5 @@
 #include "cli.h"
+#include "execution-policy.h"
 
 #include "image-io.h"
 #include "json.hpp"
@@ -23,6 +24,7 @@ using option_map = std::map<std::string, std::string>;
 void print_help() {
     std::cout
         << "umm-cli --model PACKAGE --mode MODE --prompt TEXT\n"
+           "        [--execution-policy local_310p|remote_910b] [--rpc-endpoint HOST:PORT] [--local-device CANN0]\n"
            "        MODE: text|image|think-image|interleave|think-interleave|understand|think-understand|edit|think-edit\n"
            "        [--input image.png] [--output image.png] [--max-tokens 256] [--max-images 2]\n"
            "        [--understanding-backend CANN0] [--vision-backend CANN0]\n"
@@ -51,6 +53,7 @@ option_map parse_arguments(int argc, char ** argv) {
     }
 
     const std::vector<std::string> known = {
+        "--execution-policy", "--rpc-endpoint", "--local-device",
         "--model", "--mode", "--prompt", "--input", "--output", "--max-tokens", "--max-images",
         "--width", "--height", "--steps", "--cfg", "--image-cfg", "--shift", "--seed",
         "--vae-tiling", "--vae-tile-size", "--vae-tile-overlap",
@@ -113,11 +116,12 @@ void write_metadata(const std::filesystem::path & output,
 }
 
 int run(int argc, char ** argv) {
-    const auto args = parse_arguments(argc, argv);
+    auto args = parse_arguments(argc, argv);
     if (args.empty() && argc > 1 && std::string(argv[1]) == "--help") {
         return 0;
     }
 
+    args = umm::configure_execution_policy(std::move(args));
     const auto & model = required(args, "--model");
     const auto & prompt = required(args, "--prompt");
     if (!std::filesystem::is_directory(model)) {

@@ -1,4 +1,5 @@
 #include "runtime-support.h"
+#include "execution-policy.h"
 #include "model-package.h"
 extern "C" {
 #include "sha256.h"
@@ -205,6 +206,7 @@ struct service::impl {
 };
 
 service::service(options args) {
+    args = umm::configure_execution_policy(std::move(args));
     if (args.count("--cann-q8-nz")) {
         const auto & enabled = args.at("--cann-q8-nz");
         if (enabled != "0" && enabled != "1") throw std::invalid_argument("cann-q8-nz must be 0 or 1");

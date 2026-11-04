@@ -2,13 +2,13 @@
   "llama.cpp": {
     "url": "https://github.com/umm4c/llama.cpp.git",
     "upstream": "https://github.com/ggml-org/llama.cpp.git",
-    "revision": "56f9b27073717dc35f3164396f02b4741910b181",
-    "branch": "master"
+    "revision": "9897082a26924e96d3016907be1fa360fc44b0ac",
+    "branch": "feature/rpc-910b"
   },
   "stable-diffusion.cpp": {
     "url": "https://github.com/umm4c/stable-diffusion.cpp.git",
     "upstream": "https://github.com/leejet/stable-diffusion.cpp.git",
-    "revision": "e3f4219085db507f53f110c43f0f40d61b378333",
-    "branch": "master"
+    "revision": "7ab496fba8e45ac8b1ccfa81ab9c15373682b59a",
+    "branch": "feature/rpc-910b"
   }
 }
