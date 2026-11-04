@@ -1,4 +1,5 @@
 #include "sd-cpp-adapter.h"
+#include "execution-policy.h"
 
 #include "stable-diffusion.h"
 #include "ggml-backend.h"
@@ -17,8 +18,7 @@ namespace umm {
 namespace {
 
 bool is_cann_backend(const std::string & backend) {
-    return backend.size() >= 4 &&
-           (backend.substr(0, 4) == "CANN" || backend.substr(0, 4) == "cann");
+    return backend_uses_cann(backend);
 }
 
 // Common image validation and resizing --------------------------------------

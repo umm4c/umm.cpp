@@ -33,6 +33,7 @@ target_link_libraries(llama.cpp PUBLIC llama)
 
 # UMM runtime -----------------------------------------------------------------
 add_library(umm
+    src/execution-policy.cpp
     src/session.cpp
     src/diffusion-bridge.cpp
     src/model-workflow.cpp
@@ -76,3 +77,10 @@ target_include_directories(umm-session PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/ggml/include"
 )
 target_link_libraries(umm-session PRIVATE umm-runtime)
+
+option(UMM_BUILD_BACKEND_SMOKE "Build the static backend integration probe" OFF)
+if(UMM_BUILD_BACKEND_SMOKE)
+    add_executable(umm-backend-smoke tools/backend-smoke.cpp src/execution-policy.cpp)
+    target_include_directories(umm-backend-smoke PRIVATE include)
+    target_link_libraries(umm-backend-smoke PRIVATE ggml)
+endif()

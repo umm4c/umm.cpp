@@ -1,4 +1,5 @@
 #include "session.h"
+#include "execution-policy.h"
 
 #include "diffusion-bridge.h"
 #include "ggml-backend.h"
@@ -58,7 +59,7 @@ bool has_image_prefix_data(const sd_kv_prefix_t & prefix) {
 int context_size_for_single_cann_u1(model_family family, const std::string & understanding_backend,
                                     const std::string & generation_backend) {
     if (family != model_family::sensenova_u1 || understanding_backend != generation_backend ||
-        (understanding_backend.rfind("CANN", 0) != 0 && understanding_backend.rfind("cann", 0) != 0)) {
+        !backend_uses_cann(understanding_backend)) {
         return 0;
     }
     // Limit the scheduler reservation while both U1.5 GGUFs share one 310P.
@@ -195,7 +196,8 @@ void session::impl::load_image_engine() {
     params.n_threads = 8;
     params.enable_mmap = true;
     const bool multi_device = generation_backend.find('&') != std::string::npos;
-    const bool cann = generation_backend.find("CANN") != std::string::npos ||
+    const bool cann = backend_uses_cann(generation_backend) ||
+                      generation_backend.find("CANN") != std::string::npos ||
                       generation_backend.find("cann") != std::string::npos;
     const bool disable_flash = cann || std::getenv("UMM_DISABLE_FLASH_ATTN") != nullptr;
     params.flash_attn = params.diffusion_flash_attn = !disable_flash;

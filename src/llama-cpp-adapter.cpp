@@ -1,4 +1,5 @@
 #include "llama-cpp-adapter.h"
+#include "execution-policy.h"
 
 // Keep the dependency on llama's cache layout in this adapter only.
 #include "llama-context.h"
@@ -98,7 +99,7 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
     cp.n_seq_max = 1;
     cp.n_threads = 8;
     cp.n_threads_batch = 8;
-    const bool cann = backend.rfind("CANN", 0) == 0 || backend.rfind("cann", 0) == 0;
+    const bool cann = backend_uses_cann(backend);
     cp.flash_attn_type = full_precision || cann ? LLAMA_FLASH_ATTN_TYPE_DISABLED : LLAMA_FLASH_ATTN_TYPE_ENABLED;
     const auto cache_type = llama_model_ftype(model_.get()) == LLAMA_FTYPE_MOSTLY_BF16 ? GGML_TYPE_BF16 : GGML_TYPE_F16;
     cp.type_k = cp.type_v = full_precision ? GGML_TYPE_F32 : cache_type;
