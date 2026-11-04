@@ -105,3 +105,9 @@ must set and verify it explicitly. Worker startup logs confirm the selected mode
 The optional backend probe's fourth argument `saturation` tests positive and
 negative FP16 ADD overflow against +/-65504. The `guard_negative` test deliberately
 requests a forbidden device and must fail before computation.
+
+## Reproducible worker deployment
+
+See [scripts/rpc/README.md](../scripts/rpc/README.md) for the pinned worker image,
+parameterized build/start scripts, SSH tunnel and three-task validation procedure.
+Machine-specific settings and credentials remain outside the repository.
