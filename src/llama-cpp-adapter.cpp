@@ -47,11 +47,14 @@ void record_prefill(request_metrics * metrics, const char * kind, size_t cached_
 
 llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context_size, int gpu_layers,
                                      bool full_precision, const std::string & backend,
-                                     int batch_size, int microbatch_size, bool u1_group_causal, bool u1_v_cache_contiguous)
+                                     int batch_size, int microbatch_size, bool u1_group_causal, bool u1_v_cache_contiguous, const std::string & secondary_backend)
     : u1_group_causal_(u1_group_causal) {
+    if (backend.empty() && !secondary_backend.empty()) throw std::invalid_argument("Secondary backend requires a primary backend");
     auto mp = llama_model_default_params();
     mp.n_gpu_layers = gpu_layers;
-    ggml_backend_dev_t devices[2]{};
+    ggml_backend_dev_t devices[3]{};
+    std::vector<float> primary_weights(llama_max_devices(), 0.f);
+    primary_weights[0] = 1.f;
     if (!backend.empty()) {
         devices[0] = ggml_backend_dev_by_name(backend.c_str());
         if (!devices[0]) {
@@ -60,6 +63,13 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
         mp.devices = devices;
         mp.split_mode = LLAMA_SPLIT_MODE_NONE;
         mp.main_gpu = 0;
+        if (!secondary_backend.empty()) {
+            devices[1] = ggml_backend_dev_by_name(secondary_backend.c_str());
+            if (!devices[1] || devices[1] == devices[0]) throw std::invalid_argument("Secondary backend must be a distinct registered device");
+            // Keep immutable weights and KV on the primary device; scheduler copies remote inputs.
+            mp.split_mode = LLAMA_SPLIT_MODE_LAYER;
+            mp.tensor_split = primary_weights.data();
+        }
     }
     overrides_[0].tag = LLAMA_KV_OVERRIDE_TYPE_BOOL;
     std::strcpy(overrides_[0].key, "sensenova_u1.full_precision");
@@ -151,6 +161,10 @@ void llama_cpp_adapter::reset() {
     positions_.clear();
     next_position_ = 0;
     has_logits_ = false;
+}
+
+ggml_backend_sched_t llama_cpp_adapter::scheduler() const {
+    return context_->get_sched();
 }
 
 void llama_cpp_adapter::synchronize() {
