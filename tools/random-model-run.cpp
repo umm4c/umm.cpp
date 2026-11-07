@@ -1,6 +1,7 @@
 #include "execution-policy.h"
 #include "llama-cpp-adapter.h"
 #include "random-plan.h"
+#include "weight-replicas.h"
 #include "json.hpp"
 #include <algorithm>
 #include <chrono>
@@ -30,6 +31,9 @@ struct placement_state {
     bool flip = false;
     int graph_id = 0;
     umm::random_plan plan{};
+    std::unique_ptr<umm::weight_replicas> replicas;
+    size_t weight_input_bytes = 0;
+    size_t weight_bindings = 0;
     double planning_ms = 0;
     clock_type::time_point allocation_started;
 };
@@ -45,6 +49,7 @@ bool place(ggml_backend_sched_t sched,ggml_cgraph * graph,bool allocated,void * 
                 state.plan=umm::make_random_plan(graph,ggml_backend_sched_get_backend(sched,0),
                     ggml_backend_sched_get_backend(sched,1),state.seed,state.flip,state.cuts);
                 state.planning_ms=ms(start);
+                state.weight_bindings=state.replicas ? state.replicas->bind(sched,state.plan) : 0;
                 umm::assign_random_plan(sched,state.plan);
             }
             return true;
@@ -60,10 +65,12 @@ bool place(ggml_backend_sched_t sched,ggml_cgraph * graph,bool allocated,void * 
                 {"dtype",ggml_type_name(t->type)},{"shape",{t->ne[0],t->ne[1],t->ne[2],t->ne[3]}},
                 {"compute",compute(t)},{"device",device_name(backend)}});
         }
+        state.weight_input_bytes=0;
         for (int i=0;i<ggml_backend_sched_get_n_splits(sched);++i) {
             ggml_backend_sched_split_info info{};
             if (!ggml_backend_sched_get_split_info(sched,i,&info)) throw std::runtime_error("Cannot inspect split");
-            splits.push_back({{"index",i},{"start",info.node_start},{"end_exclusive",info.node_end},{"device",device_name(info.backend)}});
+            state.weight_input_bytes+=info.weight_input_bytes;
+            splits.push_back({{"weight_input_bytes",info.weight_input_bytes},{"index",i},{"start",info.node_start},{"end_exclusive",info.node_end},{"device",device_name(info.backend)}});
         }
         if (state.mode=="random") {
             for (int cut:state.plan.cut_nodes) {
@@ -78,7 +85,8 @@ bool place(ggml_backend_sched_t sched,ggml_cgraph * graph,bool allocated,void * 
             }
             if (!first || !second) throw std::runtime_error("Random plan did not use both devices");
         }
-        json record={{"graph_id",state.graph_id},{"request_id",state.request},{"mode",state.mode},
+        if (state.replicas && state.weight_input_bytes) throw std::runtime_error("Resident weights still require scheduler transfers");
+        json record={{"weight_input_bytes",state.weight_input_bytes},{"weight_bindings",state.weight_bindings},{"graph_id",state.graph_id},{"request_id",state.request},{"mode",state.mode},
             {"seed",state.seed},{"flip_devices",state.flip},{"planning_ms",state.planning_ms},
             {"allocation_and_planning_ms",ms(state.allocation_started)},{"planned_boundaries",boundaries},
             {"actual_splits",splits},{"nodes",nodes}};
@@ -124,11 +132,26 @@ int main(int argc,char ** argv) {
         std::string remote;
         if (mode!="local") remote=umm::register_remote_cann(config.at("endpoint"));
         const std::string primary=mode=="remote" ? remote : local;
-        placement_state state;state.mode=mode;state.seed=config.value("seed",0u);state.cuts=config.value("cuts",1);state.flip=config.value("flip_devices",false);
-        state.graphs.open(out/"graphs.jsonl");if (!state.graphs) throw std::runtime_error("Cannot open graph log");
         const auto loading=clock_type::now();
         umm::llama_cpp_adapter model(config.at("model"),nctx,99,false,primary,batch,batch,true,true,mode=="random" ? remote : "");
         summary["load_ms"]=ms(loading);summary["vocab_size"]=model.vocab_size();write(out/"summary.json",summary);
+        placement_state state;state.mode=mode;state.seed=config.value("seed",0u);state.cuts=config.value("cuts",1);state.flip=config.value("flip_devices",false);
+        state.graphs.open(out/"graphs.jsonl");if (!state.graphs) throw std::runtime_error("Cannot open graph log");
+        const bool replicate=config.value("replicate_weights",false);
+        if (replicate && mode!="random") throw std::invalid_argument("Weight replication requires random mode");
+        summary["replicate_weights"]=replicate;
+        summary["replica_init_ms"]=0;
+        if (replicate) {
+            const auto start=clock_type::now();
+            state.replicas.reset(new umm::weight_replicas(model.weights(), {
+                ggml_backend_sched_get_backend(model.scheduler(),0),ggml_backend_sched_get_backend(model.scheduler(),1)}));
+            summary["replica_init_ms"]=ms(start);
+            summary["weight_residency"]=json::array();
+            for (const auto & r:state.replicas->residency()) summary["weight_residency"].push_back({
+                {"device",device_name(r.backend)},{"tensor_count",r.tensor_count},{"logical_bytes",r.logical_bytes},
+                {"allocated_bytes",r.allocated_bytes},{"uploaded_bytes",r.uploaded_bytes}});
+        }
+        write(out/"summary.json",summary);
         ggml_backend_sched_set_placement_callback(model.scheduler(),place,&state);
         std::ofstream forwards(out/"forwards.jsonl"),requests(out/"requests.jsonl");
         if (!forwards || !requests) throw std::runtime_error("Cannot open timing logs");
@@ -179,7 +202,7 @@ int main(int argc,char ** argv) {
                     for (int i=0;i<vocab;++i) if (!std::isfinite(logits[i])) throw std::runtime_error("Non-finite baseline logits");
                     forced.push_back(prediction);
                 }
-                forwards << json({{"request_id",state.request},{"step",step},{"phase",step==0 ? "prefill" : "decode"},
+                forwards << json({{"weight_input_bytes",state.weight_input_bytes},{"request_id",state.request},{"step",step},{"phase",step==0 ? "prefill" : "decode"},
                     {"input_tokens_this_forward",step==0 ? tokens.size() : 1},{"model_ms",elapsed},{"active_graph_id",state.graph_id},
                     {"new_graph_count",state.graph_id-previous},{"graph_reused",state.graph_id==previous},{"prediction",prediction},
                     {"fed_reference_token",forced.back()},{"accuracy",accuracy},{"logits_file",file}}).dump() << '\n';forwards.flush();
@@ -197,6 +220,7 @@ int main(int argc,char ** argv) {
             std::cout << "MODEL_REQUEST " << state.request << " ms=" << model_ms << " steps=" << predicted.size() << " top1_matches=" << matches << std::endl;
         }
         ggml_backend_sched_set_placement_callback(model.scheduler(),nullptr,nullptr);
+        state.replicas.reset();
         summary["status"]="completed";summary["graph_allocations"]=state.graph_id;write(out/"summary.json",summary);
         return 0;
     } catch (const std::exception & e) {

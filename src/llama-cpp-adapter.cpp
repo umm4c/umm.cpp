@@ -163,6 +163,12 @@ void llama_cpp_adapter::reset() {
     has_logits_ = false;
 }
 
+std::vector<ggml_tensor *> llama_cpp_adapter::weights() const {
+    std::vector<ggml_tensor *> result;
+    for (const auto & item : model_->tensors_by_name) result.push_back(item.second);
+    return result;
+}
+
 ggml_backend_sched_t llama_cpp_adapter::scheduler() const {
     return context_->get_sched();
 }
