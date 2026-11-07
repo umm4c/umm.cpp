@@ -45,6 +45,7 @@ public:
     void reset();
     void synchronize();
     ggml_backend_sched_t scheduler() const;
+    std::vector<ggml_tensor *> weights() const;
     void append(const std::vector<llama_token> & tokens, bool need_logits = true,
                 request_metrics * metrics = nullptr, bool last_chunk_only = false);
     // BAGEL supplies a flat sequence of vision embeddings.

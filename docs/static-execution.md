@@ -196,3 +196,29 @@ Real-model single-cut validation does not establish support for arbitrary KV
 migration, multi-cut model plans, visual input or diffusion graphs. Cut locations
 remain constrained by persistent storage ownership. Results and complete configs
 are under results/random-model-20261105 in the shared workspace.
+
+## Session-local replicated weights
+
+For the real-model random probe, `replicate_weights: true` eagerly prepares one
+copy of each understanding weight on each selected backend. Existing weights on
+the primary device are reused. The other copy is allocated outside the scheduler's
+temporary graph allocator and uploaded once per model session using backend tensor
+copy (canonical get/set when needed). The replica upload is reported separately
+as `replica_init_ms`; it is not part of request `model_ms`.
+
+The placement callback binds each compute node's weight inputs to its selected
+backend, including views with offsets and strides. Replica buffers are marked
+WEIGHTS and survive graph rebuilds, decode reuse and request KV resets. KV remains
+on the primary device. Activations and mutable state still use scheduler transfers.
+The callback rejects any resulting split that still lists weight inputs to copy.
+
+`weight_residency` reports tensor count, logical bytes, allocated buffer bytes and
+uploaded logical bytes for each device. Graph and forward records include
+`weight_input_bytes`: the sum of logical weight input sizes listed for copying by
+the scheduler on each execution. This is not a measured network byte count; expert
+slicing and backend transport can change physical bytes. The current U1.5 text
+probe has no expert slicing. The count excludes initialization uploads.
+
+This option currently covers the experimental text runner with Q8 NZ disabled.
+It does not add remote weight persistence across client process exits or change
+the RPC wire protocol. The two static production policies remain unchanged.
