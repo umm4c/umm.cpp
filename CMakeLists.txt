@@ -34,6 +34,7 @@ target_link_libraries(llama.cpp PUBLIC llama)
 # UMM runtime -----------------------------------------------------------------
 add_library(umm
     src/execution-policy.cpp
+    src/random-plan.cpp
     src/session.cpp
     src/diffusion-bridge.cpp
     src/model-workflow.cpp
@@ -83,4 +84,11 @@ if(UMM_BUILD_BACKEND_SMOKE)
     add_executable(umm-backend-smoke tools/backend-smoke.cpp src/execution-policy.cpp)
     target_include_directories(umm-backend-smoke PRIVATE include)
     target_link_libraries(umm-backend-smoke PRIVATE ggml)
+
+    add_executable(umm-random-plan-smoke tools/random-plan-smoke.cpp src/random-plan.cpp src/execution-policy.cpp)
+    target_include_directories(umm-random-plan-smoke PRIVATE include)
+    target_link_libraries(umm-random-plan-smoke PRIVATE ggml)
+    add_executable(umm-random-model-run tools/random-model-run.cpp)
+    target_include_directories(umm-random-model-run PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty")
+    target_link_libraries(umm-random-model-run PRIVATE umm llama.cpp ggml)
 endif()

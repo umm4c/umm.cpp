@@ -111,3 +111,88 @@ requests a forbidden device and must fail before computation.
 See [scripts/rpc/README.md](../scripts/rpc/README.md) for the pinned worker image,
 parameterized build/start scripts, SSH tunnel and three-task validation procedure.
 Machine-specific settings and credentials remain outside the repository.
+
+## Random partition integration probe
+
+`UMM_BUILD_BACKEND_SMOKE=ON` also builds `umm-random-plan-smoke` when CANN and RPC
+are enabled together. It exercises the shared `random-plan.h` interface without
+changing the two production static policies. It is not yet a model inference policy.
+
+```sh
+build-random-dispatch/bin/umm-random-plan-smoke 127.0.0.1:50052 CANN0 4
+```
+
+Use the validated CANN container with one local NPU mapped and the existing SSH
+forward. Set `GGML_RPC_NO_RDMA=1`, `GGML_CANN_Q8_NZ=0`, and
+`GGML_CANN_SATURATION=1`. The worker must retain its validated saturation setting.
+Build with `GGML_CANN=ON`, `GGML_RPC=ON`, `GGML_RPC_RDMA=OFF`,
+`SOC_TYPE=Ascend310P3`, and `USE_ACL_GRAPH=OFF` in a separate build directory.
+
+The probe tests one cut, two cuts, then a cut between each pair of compute nodes.
+For each seed it picks cuts and a starting device, then tests the opposite mapping.
+Views stay with their storage owner; allocated/in-place outputs cannot migrate.
+Unsupported placements are rejected. Multi-cut search is bounded to 64 attempts;
+failure means no valid sampled candidate was found, not proof that none exists.
+
+Apply a plan after scheduler reset, then call `ggml_backend_sched_alloc_graph`
+explicitly, check its resulting assignments, and only then execute. Plans hold graph
+pointers and are valid only for that graph's lifetime. Repeating a seed reproduces
+selection for the same graph/build; portable serialized plan replay is not implemented.
+
+The probe checks F32/F16 weights with F32 activations in a branched MatMul/SiLU/scale/residual graph, a view, changed inputs
+on repeated execution, and rejection of pinned in-place alias partitions. It checks
+intermediates and outputs against a host arithmetic reference and compares final
+outputs to both pure-device executions with absolute tolerance 0.001. No CPU graph
+compute fallback is permitted. This does not validate model KV state, general dtype
+or operator coverage, model weight residency, or mixed model inference. Those require
+the next text/vision/generation integration steps.
+
+## Real-model random placement probe
+
+`umm-random-model-run CONFIG.json NEW_OUTPUT_DIR` runs the U1.5 understanding GGUF
+through the normal llama adapter. The adapter's optional secondary backend keeps
+weights and KV on the primary device and exposes both backends to the scheduler.
+The GGML placement callback runs before allocation and validates assignments after
+allocation. Its default is null, preserving normal scheduler behavior.
+
+Example configuration for the reference run:
+
+```json
+{
+  "mode": "local",
+  "model": "/model/understanding.gguf",
+  "local_device": "CANN0",
+  "n_ctx": 512,
+  "n_batch": 128,
+  "max_tokens": 12,
+  "requests": [{"id": "count-r0", "prompt": "Count from 1 to 5, separated by commas, without any other text."}]
+}
+```
+
+For comparisons use the same requests and sizes. Set mode to `remote` or `random`,
+add endpoint `127.0.0.1:50052`, and set `reference_dir` to the local run's output.
+Random mode accepts seed, cuts (tested on the real model with 1), and flip_devices.
+Use the same CANN+RPC container/device setup and numerical environment as the small
+probe. Q8 NZ is disabled in all modes for this comparison. The output directory must
+not exist. The generic CLI/session execution-policy options remain the two static
+policies; this experimental model runner is a separate entry point.
+
+Each request records load/request/forward timings, token predictions and output.
+`graphs.jsonl` stores planned cuts and actual split ranges, backend, node names,
+operators, tensor dtype and shape. `forwards.jsonl` links each prefill/decode to the
+active graph ID, including graph reuse. Each step saves full float32 logits.
+Compared runs use the reference continuation (teacher forcing) to keep prefixes
+identical; top-1 agreement is not an answer-correctness benchmark. Logit tolerances
+are configured before execution (defaults: atol 0.05, rtol 0.005).
+
+Recorded model_ms includes the allocation callback's instrumentation. Request wall
+time also includes snapshot IO and comparison; model load time is separate.
+Callback metadata timing includes record preparation. These measurements describe
+the experimental runner, not uninstrumented production latency. RPC weight-input
+copies can dominate random placement. Initial reserve is on the primary device,
+so later dynamic placement can increase remote buffers beyond that initial estimate.
+
+Real-model single-cut validation does not establish support for arbitrary KV
+migration, multi-cut model plans, visual input or diffusion graphs. Cut locations
+remain constrained by persistent storage ownership. Results and complete configs
+are under results/random-model-20261105 in the shared workspace.
