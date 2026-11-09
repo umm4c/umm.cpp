@@ -160,8 +160,7 @@ struct service::impl {
             session engine(model, "", option(args, "--understanding-backend"), option(args, "--generation-backend"),
                 option(args, "--generation-max-vram"), option(args, "--vision-backend"),
                 std::stoi(option(args, "--n-ctx", "0")), std::stoi(option(args, "--n-batch", "0")),
-                std::stoi(option(args, "--n-ubatch", "0")), option(args, "--u1-prefill-mode", "optimized"),
-                option(args, "--u1-v-cache-layout", "default"));
+                std::stoi(option(args, "--n-ubatch", "0")));
             ready = {{"type", "ready"}, {"protocol", "umm-session/v1"},
                      {"cold_start_ms", std::chrono::duration<double, std::milli>(clock::now()-start).count()},
                      {"model", model}, {"options", args}, {"runtime_identity", runtime_identity(model, args)},

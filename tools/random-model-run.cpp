@@ -133,7 +133,7 @@ int main(int argc,char ** argv) {
         if (mode!="local") remote=umm::register_remote_cann(config.at("endpoint"));
         const std::string primary=mode=="remote" ? remote : local;
         const auto loading=clock_type::now();
-        umm::llama_cpp_adapter model(config.at("model"),nctx,99,false,primary,batch,batch,true,true,mode=="random" ? remote : "");
+        umm::llama_cpp_adapter model(config.at("model"),nctx,99,false,primary,batch,batch,mode=="random" ? remote : "");
         summary["load_ms"]=ms(loading);summary["vocab_size"]=model.vocab_size();write(out/"summary.json",summary);
         placement_state state;state.mode=mode;state.seed=config.value("seed",0u);state.cuts=config.value("cuts",1);state.flip=config.value("flip_devices",false);
         state.graphs.open(out/"graphs.jsonl");if (!state.graphs) throw std::runtime_error("Cannot open graph log");

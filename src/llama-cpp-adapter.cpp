@@ -47,8 +47,7 @@ void record_prefill(request_metrics * metrics, const char * kind, size_t cached_
 
 llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context_size, int gpu_layers,
                                      bool full_precision, const std::string & backend,
-                                     int batch_size, int microbatch_size, bool u1_group_causal, bool u1_v_cache_contiguous, const std::string & secondary_backend)
-    : u1_group_causal_(u1_group_causal) {
+                                     int batch_size, int microbatch_size, const std::string & secondary_backend) {
     if (backend.empty() && !secondary_backend.empty()) throw std::invalid_argument("Secondary backend requires a primary backend");
     auto mp = llama_model_default_params();
     mp.n_gpu_layers = gpu_layers;
@@ -91,9 +90,6 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
     if (family_ == model_family::unknown) {
         throw std::runtime_error("Expected a supported understanding GGUF");
     }
-    if (u1_v_cache_contiguous && family_ != model_family::sensenova_u1) {
-        throw std::invalid_argument("Contiguous V cache is only supported for SenseNova U1");
-    }
     const auto & descriptor = model_descriptor_for(family_);
     auto cp = llama_context_default_params();
     if (context_size < 0) throw std::invalid_argument("Context size must be nonnegative");
@@ -105,7 +101,7 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
                                     (compact_bagel ? 512 : descriptor.batch_size));
     cp.n_ubatch = std::min<uint32_t>(cp.n_batch, microbatch_size ? microbatch_size :
                                      (compact_bagel ? 256 : cp.n_batch));
-    cp.kv_v_contiguous = u1_v_cache_contiguous;
+    cp.kv_v_contiguous = family_ == model_family::sensenova_u1;
     cp.n_seq_max = 1;
     cp.n_threads = 8;
     cp.n_threads_batch = 8;
@@ -178,7 +174,7 @@ void llama_cpp_adapter::synchronize() {
 }
 
 void llama_cpp_adapter::append(const std::vector<llama_token> & tokens, bool need_logits,
-                                request_metrics * metrics, bool last_chunk_only) {
+                                request_metrics * metrics) {
     if (tokens_.size() + tokens.size() > llama_n_ctx(context_.get())) {
         throw std::runtime_error("Understanding context is full");
     }
@@ -197,7 +193,7 @@ void llama_cpp_adapter::append(const std::vector<llama_token> & tokens, bool nee
         for (int i = 0; i < n; ++i) {
             positions[i] = next_position_ + i;
         }
-        outputs.back() = need_logits && (!last_chunk_only || offset + n == tokens.size());
+        outputs.back() = need_logits && (family_ != model_family::sensenova_u1 || offset + n == tokens.size());
         llama_batch batch{};
         batch.n_tokens = n;
         batch.token = const_cast<llama_token *>(tokens.data() + offset);
@@ -345,10 +341,7 @@ void llama_cpp_adapter::append_u1_image_body(const std::vector<float> & embeddin
     if (metrics) synchronize();
     const auto start = metrics_clock::now();
     has_logits_ = false;
-    if (!u1_group_causal_) llama_set_causal_attn(context_.get(), false);
     const int status = llama_decode(context_.get(), batch);
-    if (!u1_group_causal_) llama_set_causal_attn(context_.get(), true);
-    if (metrics && !u1_group_causal_) metrics->attention_mode_switches += 2;
     if (status) {
         throw std::runtime_error("SenseNova U1 image understanding decode failed");
     }
@@ -407,7 +400,7 @@ std::vector<float> llama_cpp_adapter::token_embeddings(const std::vector<llama_t
 
 void llama_cpp_adapter::append_u1_mixed(const std::vector<u1_prefill_segment> & segments,
                                         bool need_logits, request_metrics * metrics) {
-    if (family_ != model_family::sensenova_u1 || !u1_group_causal_) {
+    if (family_ != model_family::sensenova_u1) {
         throw std::invalid_argument("Mixed prefill requires SenseNova image-group attention");
     }
     const size_t dim = llama_model_n_embd(model_.get());
