@@ -37,18 +37,17 @@ the driver directory and `/usr/local/bin/npu-smi` mounted. Include the driver
 sample counts, maximum valid gap and coverage status. The peak sums device
 processes and excludes driver memory. An unavailable measurement is `null`.
 
-U1.5 manual runners explicitly use `--u1-prefill-mode mixed4` and
-`--u1-v-cache-layout contiguous`, plus `--cann-q8-nz 1`. Override them with `U1_PREFILL_MODE`,
-`U1_V_CACHE_LAYOUT` and `CANN_Q8_NZ` (0 or 1); benchmark records include these settings and batch capacity.
-`mixed4` merges text and up to four complete image groups within batch limits.
-Pure text-to-image uses the text prefix path, so it does not need image grouping.
+U1.5 automatically uses mixed prefill with up to four complete image groups
+and contiguous V cache. The former prefill/layout options and the
+`U1_PREFILL_MODE` / `U1_V_CACHE_LAYOUT` script overrides are removed.
+`CANN_Q8_NZ` (0 or 1) remains a backend layout setting; manual 310P runners use 1.
+Actual U1 prefill/layout choices are recorded in runtime identity.
+Pure text-to-image uses the text prefix path.
 
-Direct CLI/session/server calls retain the generic `optimized/default` defaults
-for compatibility. For SenseNova on Ascend, pass both options explicitly; the
-benchmark task configs already do so. The prefill and cache options are SenseNova-specific. Q8 NZ keeps W8A16 precision and one resident weight payload; its backend default is off, and BAGEL profiles do not enable it.
-For direct CANN calls, use `--u1-prefill-mode mixed4 --u1-v-cache-layout contiguous --cann-q8-nz 1` with the task capacity: understanding
+For direct CANN calls, use `--cann-q8-nz 1` with the task capacity: understanding
 `8192/4096/4096`, long-context `32768/1152/1152`. The manual image/interleave
-runner retains `2048/512/256`.
+runner retains `2048/512/256`. Q8 NZ preserves W8A16 precision; BAGEL profiles
+do not enable it.
 
 ```bash
 # BAGEL text and image

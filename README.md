@@ -375,22 +375,18 @@ followed by text items, plus `params.max_new_tokens`. Unsupported inputs return
 a per-case error; model loading errors return `fatal`. Diffusion settings such
 as `--steps`, `--cfg`, and `--shift` are session flags.
 
-U1 understanding accepts `--u1-prefill-mode optimized|baseline|merge|logits|grouped|mixed2|mixed4`
-(default `optimized`). `merge` combines consecutive text and image boundary
-IDs into causal batches; `logits` requests only the final prompt logits;
-`optimized` enables both. Image groups retain their noncausal attention and
-spatial positions. Experimental `grouped` uses temporal causal attention with
-full visibility within each image and removes attention-mode toggles.
-`mixed2` / `mixed4` additionally combine text and up to 2 / 4 complete images
-within the configured microbatch capacity. Text embedding lookup stays on its
-weight backend; host memory assembles the mixed embeddings. BAGEL retains its
-existing workflow.
-
-U1 also accepts experimental `--u1-v-cache-layout default|contiguous`
-(default `default`). `contiguous` writes complete V cache rows without changing
-the attention implementation selection. CANN uses ordinary attention with
-FlashAttention disabled. The selected layout appears in
-`ready.runtime_identity.policy.u1_v_cache_layout`.
+SenseNova U1 uses grouped image attention and mixed prefill by default: text and
+up to four complete image groups share each batch, within the configured
+batch/microbatch capacity. Only the final prompt logits are requested. Text
+embedding lookup stays on the weight backend; host memory assembles the mixed
+embeddings. U1 V cache uses contiguous rows automatically; other model families
+retain their own layout. These are fixed implementations, not runtime modes.
+The former `--u1-prefill-mode` and `--u1-v-cache-layout` options are removed.
+Actual choices are recorded in `ready.runtime_identity.policy` as
+`u1_prefill_mode` and `u1_v_cache_layout` (null for other families).
+CANN uses ordinary attention with FlashAttention disabled. Q8 NZ remains a
+separate backend layout choice because it has device/memory compatibility
+constraints. BAGEL retains its existing workflow.
 
 Understanding results include `prefill.batches` (kind, token count, cached
 input tokens, logits rows, elapsed milliseconds), aggregate call/logits counts,
@@ -399,7 +395,7 @@ and a batching-independent FNV-1a fingerprint of input IDs and all position axes
 split encoder and LLM execution time. Mixed batch time includes text embedding
 lookup and assembly; its legacy `vision_encode` contains only image encoding.
 Detailed LLM timers synchronize each batch and include graph
-reservation and dispatch. Use the same instrumented binary for mode comparisons.
+reservation and dispatch. Use the same instrumented binary for performance comparisons.
 The legacy `vision_encode` field measures the image insertion call: moving text
 boundaries outside that call changes its partition; compare the new detailed
 fields and end-to-end latency across modes. Graph reservation remains visible

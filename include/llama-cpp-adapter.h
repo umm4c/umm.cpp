@@ -37,7 +37,6 @@ public:
     explicit llama_cpp_adapter(const std::string & model_path, int context_size = 0, int gpu_layers = 99,
                                bool full_precision = false, const std::string & backend = "",
                                int batch_size = 0, int microbatch_size = 0,
-                               bool u1_group_causal = false, bool u1_v_cache_contiguous = false,
                                const std::string & secondary_backend = "");
     std::vector<llama_token> tokenize(const std::string & text) const;
     std::string piece(llama_token token) const;
@@ -47,7 +46,7 @@ public:
     ggml_backend_sched_t scheduler() const;
     std::vector<ggml_tensor *> weights() const;
     void append(const std::vector<llama_token> & tokens, bool need_logits = true,
-                request_metrics * metrics = nullptr, bool last_chunk_only = false);
+                request_metrics * metrics = nullptr);
     // BAGEL supplies a flat sequence of vision embeddings.
     void append_bagel_image_embeddings(const std::vector<float> & embeddings);
     // SenseNova U1 supplies spatial embeddings with a 2-D image grid.
@@ -90,7 +89,6 @@ private:
     std::vector<llama_pos> positions_;
     llama_pos next_position_ = 0;
     bool has_logits_ = false;
-    bool u1_group_causal_ = false;
 };
 
 }

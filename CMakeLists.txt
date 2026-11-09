@@ -82,6 +82,9 @@ target_link_libraries(umm-session PRIVATE umm-runtime)
 
 option(UMM_BUILD_BACKEND_SMOKE "Build the static backend integration probe" OFF)
 if(UMM_BUILD_BACKEND_SMOKE)
+    add_executable(umm-rope-cache-smoke tools/rope-cache-smoke.cpp)
+    target_link_libraries(umm-rope-cache-smoke PRIVATE ggml)
+
     add_executable(umm-backend-smoke tools/backend-smoke.cpp src/execution-policy.cpp)
     target_include_directories(umm-backend-smoke PRIVATE include)
     target_link_libraries(umm-backend-smoke PRIVATE ggml)

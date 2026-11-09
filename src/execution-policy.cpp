@@ -103,8 +103,6 @@ execution_options configure_execution_policy(execution_options options) {
     options.emplace("--n-ctx", "2048");
     options.emplace("--n-batch", "512");
     options.emplace("--n-ubatch", "256");
-    options.emplace("--u1-prefill-mode", "mixed4");
-    options.emplace("--u1-v-cache-layout", "contiguous");
     environment("GGML_CANN_Q8_NZ", get(options, "--cann-q8-nz"));
     environment("GGML_SCHED_STRICT_ACCEL", "1");
     environment("GGML_REQUIRED_DEVICE", selected);
