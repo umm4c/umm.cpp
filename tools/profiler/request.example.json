@@ -1,0 +1,8 @@
+{
+  "model": "/path/to/model-package",
+  "devices": [
+    {"id": "local-310p", "transport": "local", "backend": "CANN0"},
+    {"id": "remote-910b", "transport": "rpc", "backend": "CANN0", "endpoint": "127.0.0.1:50052"}
+  ],
+  "representative_workload": "/path/to/workload-directory"
+}
