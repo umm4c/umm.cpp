@@ -7,6 +7,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
+# Profiler contract is independent of inference engines and device SDKs.
+add_subdirectory(tools/profiler)
+
 # Shared engine configuration -------------------------------------------------
 # Both engines must see exactly the same ggml tensor ABI.
 add_compile_definitions(GGML_MAX_NAME=160)

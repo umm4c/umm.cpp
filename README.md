@@ -419,3 +419,9 @@ auto image = session.image("Design a clear illustration of the water cycle.", op
 ```
 
 See [session.h](include/session.h) for the public interface and defaults.
+
+## Profiler interface prototype
+
+The independent [profiler interface](tools/profiler/README.md) accepts a model, device list
+and representative workload. It currently exports explicitly marked mock data
+without loading models or accessing devices.
