@@ -41,21 +41,29 @@ void check_multi_split(ggml_backend_t remote){
        ggml_backend_sched_get_tensor_backend(sched,last)!=cpu || !ggml_backend_buffer_is_host(last->buffer))
         throw std::runtime_error("Multi-split placement mismatch");
     scheduler_check check{last,0};std::vector<float> input(16384);
+    std::array<ggml_rpc_profile_record,64> records{};uint32_t count=0;
+    if(!ggml_backend_rpc_profile_begin(remote,42,records.size()))throw std::runtime_error("Multi-split window start failed");
     for(int replay=0;replay<3;++replay){
         const float value=1.25f+replay;std::fill(input.begin(),input.end(),value);check.expected=4*value;
         ggml_backend_tensor_set(a,input.data(),0,ggml_nbytes(a));ggml_backend_tensor_set(b,input.data(),0,ggml_nbytes(b));
-        ggml_backend_set_graph_observer(observe_scheduler,&check);
+        ggml_backend_set_graph_submission_observer(observe_scheduler,&check);
         const auto status=ggml_backend_sched_graph_compute_async(sched,graph);
-        ggml_backend_set_graph_observer(nullptr,nullptr);
+        ggml_backend_set_graph_submission_observer(nullptr,nullptr);
         if(status!=GGML_STATUS_SUCCESS)throw std::runtime_error("CPU/RPC/CPU completion or output mismatch");
     }
     if(check.parents!=3 || check.children!=9)throw std::runtime_error("Multi-split observation count mismatch");
+    if(!ggml_backend_rpc_profile_end(remote,42,records.data(),records.size(),&count) || count!=3)throw std::runtime_error("Multi-split worker record mismatch");
+    if(records[0].reused || !records[1].reused || !records[2].reused)throw std::runtime_error("GRAPH/RECOMPUTE coverage mismatch");
     ggml_backend_sched_free(sched);ggml_free(ctx);ggml_backend_free(cpu);
 }
 }
 int main(int argc,char ** argv){
-    if(argc!=2)throw std::invalid_argument("Usage: umm-profiler-rpc-fence-test ENDPOINT");
+    if(argc!=2 && argc!=3)throw std::invalid_argument("Usage: umm-profiler-rpc-fence-test ENDPOINT [legacy]");
     auto backend=ggml_backend_rpc_init(argv[1],0);if(!backend)throw std::runtime_error("RPC initialization failed");
+    if(argc==3){
+        if(std::string(argv[2])!="legacy" || ggml_backend_rpc_profile_begin(backend,1,64))throw std::runtime_error("Legacy worker unexpectedly supports batch timing");
+        ggml_backend_free(backend);std::puts("PASS: legacy worker rejected profiling before sending unknown commands");return 0;
+    }
     auto ctx=ggml_init({1024*1024,nullptr,true});if(!ctx)throw std::runtime_error("Context allocation failed");
     auto a=ggml_new_tensor_1d(ctx,GGML_TYPE_F32,16384),b=ggml_dup_tensor(ctx,a),out=ggml_add(ctx,a,b);
     auto graph=ggml_new_graph_custom(ctx,32,false);ggml_build_forward_expand(graph,out);
@@ -72,7 +80,19 @@ int main(int argc,char ** argv){
         records.push_back({{"completion_read_bytes",size},{"samples_ms",samples}});
     }
     ggml_backend_tensor_get(out,output.data(),0,ggml_nbytes(out));for(auto v:output)if(v!=2.5f)throw std::runtime_error("RPC output mismatch");
+    std::array<ggml_rpc_profile_record,64> batch{};uint32_t count=0;
+    if(ggml_backend_rpc_profile_begin(backend,1,0) || !ggml_backend_rpc_profile_begin(backend,1,batch.size()) ||
+       ggml_backend_rpc_profile_begin(backend,2,batch.size()))throw std::runtime_error("Window state validation failed");
+    for(int i=0;i<3;++i)if(ggml_backend_graph_compute_async(backend,graph)!=GGML_STATUS_SUCCESS)throw std::runtime_error("Batch compute failed");
+    if(ggml_backend_rpc_profile_end(backend,2,batch.data(),batch.size(),&count) ||
+       !ggml_backend_rpc_profile_end(backend,1,batch.data(),batch.size(),&count) || count!=3)throw std::runtime_error("Window completion/count failed");
+    for(uint32_t i=0;i<count;++i)if(batch[i].sequence!=i || batch[i].n_nodes!=1 || batch[i].compute_ns==0 ||
+        (i && batch[i].start_ns<batch[i-1].start_ns+batch[i-1].prepare_ns+batch[i-1].compute_ns))throw std::runtime_error("Worker time/order mismatch");
+    if(!ggml_backend_rpc_profile_begin(backend,3,1))throw std::runtime_error("Overflow window start failed");
+    ggml_backend_graph_compute_async(backend,graph);ggml_backend_graph_compute_async(backend,graph);
+    if(ggml_backend_rpc_profile_end(backend,3,batch.data(),1,&count))throw std::runtime_error("Overflow silently accepted");
+    if(!ggml_backend_rpc_profile_begin(backend,4,batch.size()) || !ggml_backend_rpc_profile_end(backend,4,batch.data(),batch.size(),&count) || count!=0)throw std::runtime_error("Empty window/reuse failed");
     check_multi_split(backend);
-    std::puts(nlohmann::json({{"status","passed"},{"records",records},{"multi_split","CPU/RPC/CPU: three replays, exact host output at scheduler END"}}).dump(2).c_str());
+    std::puts(nlohmann::json({{"status","passed"},{"records",records},{"batch","ordered worker records, completion, nesting, mismatch, overflow, empty window and reuse"},{"multi_split","CPU/RPC/CPU: three replays, exact host output at scheduler END"}}).dump(2).c_str());
     ggml_backend_buffer_free(buffer);ggml_free(ctx);ggml_backend_free(backend);
 }

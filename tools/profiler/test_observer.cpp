@@ -8,7 +8,8 @@
 #include <thread>
 
 namespace {
-void require(bool ok) { if(!ok)throw std::runtime_error("Graph observer contract failed"); }
+void require_at(bool ok,int line) { if(!ok)throw std::runtime_error("Graph observer contract failed at line "+std::to_string(line)); }
+#define require(ok) require_at((ok),__LINE__)
 struct observations { int begin=0,end=0;bool abort=false; };
 bool observe(ggml_backend_t,ggml_backend_sched_t,ggml_cgraph *,bool completed,ggml_status status,void * user) {
     auto & state=*static_cast<observations*>(user);
@@ -92,6 +93,22 @@ void test_rpc_completion(){
         require(ggml_backend_sched_graph_compute_async(sched,graph)==GGML_STATUS_FAILED);
         require(rpc.reads==4 && rpc.pending==nullptr);
         ggml_backend_set_graph_observer(nullptr,nullptr);
+        rpc.fail_compute=false;rpc.reads=0;observations submitted;
+        ggml_backend_tensor_set(a,input.data(),0,sizeof(input));ggml_backend_tensor_set(b,input.data(),0,sizeof(input));
+        ggml_backend_set_graph_submission_observer(observe,&submitted);
+        require(ggml_backend_graph_compute_async(backend,graph)==GGML_STATUS_SUCCESS);
+        require(submitted.begin==1 && submitted.end==1 && rpc.pending && rpc.reads==0);
+        ggml_backend_set_graph_submission_observer(nullptr,nullptr);
+        std::array<float,4> values{};ggml_backend_tensor_get(sum,values.data(),0,sizeof(values));
+        require(!rpc.pending && values[3]==8);
+        rpc.reads=0;submitted={};
+        ggml_backend_tensor_set(a,input.data(),0,sizeof(input));ggml_backend_tensor_set(b,input.data(),0,sizeof(input));
+        ggml_backend_set_graph_submission_observer(observe,&submitted);
+        require(ggml_backend_sched_graph_compute_async(sched,graph)==GGML_STATUS_SUCCESS);
+        require(submitted.begin==2 && submitted.end==2 && rpc.pending && rpc.reads==0);
+        ggml_backend_set_graph_submission_observer(nullptr,nullptr);
+        ggml_backend_tensor_get(sum,values.data(),0,sizeof(values));
+        require(!rpc.pending && values[3]==8);
         rpc.buffer->iface.get_tensor=rpc.get;rpc.buffer=nullptr;
         ggml_backend_sched_free(sched);ggml_free(ctx);
     }

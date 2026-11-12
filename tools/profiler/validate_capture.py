@@ -52,13 +52,24 @@ def validate(root):
         assert event["data_origin"] == "measured" and event["executed"] and event["status"] == 0
         assert (event["device_id"], event["graph_id"]) in by_graph
         assert event["duration_ms"] >= 0
+        if event["timing_scope"] == "rpc_worker_synchronized_host_wall":
+            submitted = event_map[event["submission_event_id"]]
+            assert submitted["event_type"] == "submitted" and event["event_type"] == "completed"
+            assert submitted["graph_id"] == event["graph_id"] and submitted["device_id"] == event["device_id"]
+            assert submitted["case_id"] == event["case_id"] and submitted["replay"] == event["replay"]
+            assert submitted["clock_domain"] != event["clock_domain"]
+            assert event["parent_event_id"] is None and event["kind"] == "backend"
+            assert event["worker_nodes"] == len(by_graph[event["device_id"], event["graph_id"]]["nodes"])
+        if event.get("event_type") == "submitted":
+            assert event["timing_scope"] == "client_submission_host_wall"
         parent = event["parent_event_id"]
         if parent is not None:
             assert parent in event_map
             assert event_map[parent]["device_id"] == event["device_id"]
+            assert event_map[parent].get("clock_domain") == event.get("clock_domain")
             assert event_map[parent]["start_ms"] <= event["start_ms"]
             assert event["start_ms"] + event["duration_ms"] <= event_map[parent]["start_ms"] + event_map[parent]["duration_ms"] + .01
-        if not event["warmup"]:
+        if not event["warmup"] and event.get("event_type") != "submitted":
             sample_counts[event["device_id"], event["graph_id"]] += 1
     assert {(x["device_id"], x["graph_id"]) for x in costs} == set(sample_counts)
     for cost in costs:

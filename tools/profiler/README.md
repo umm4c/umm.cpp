@@ -162,23 +162,44 @@ Phase metadata covers understanding prefill/decode and native U1 vision graphs.
 Generation is a coarse phase, without individual conditioning/diffusion/VAE graph
 labels. Exact tensor shapes remain available for unclassified graphs.
 
-**Timing is synchronized host wall time**, including submission and waits, not
-device kernel time. The legacy `export_before_ms` field records structure work in structure events
+**Completed timing is synchronized host wall time, not device kernel time.**
+Local timing and structure/capture observation retain their existing waits.
+RPC timing passes require a protocol 6.1 worker and instead open a window per
+request, record client submissions without observer-added waits, and collect
+worker records in one final response. Normal logits, activation and result reads
+are unchanged. Ordinary inference does not send profiling commands. A 6.1 client
+can use a 6.0 worker for ordinary inference, but batch profiling rejects it before
+sending unknown commands; a 6.0 client cannot connect to a 6.1 worker.
+
+The legacy `export_before_ms` field records structure work in structure events
 and contract-check/lookup preparation in timing events. Full JSON
 export and candidate discovery occur only in the structure pass.
-Scheduler intervals contain backend intervals and child export overhead; they
-must not be summed. Event start_ms is relative to its per-device collector origin. Observation adds synchronization and changes overlap, so
-these values are not uninstrumented production latency. RPC completion is fenced
-with a bounded response-bearing tensor read (up to 4096 bytes); its round-trip/read overhead is
-included, since ordinary RPC synchronization only drains client submissions. Only timing-pass events enter
-cost statistics; a percentile with few samples is descriptive only.
+Client events use their per-device collector clock. Synchronized client scheduler
+intervals contain backend intervals and child preparation, so must not be summed.
+RPC timing emits `event_type: submitted`, `timing_scope: client_submission_host_wall`;
+its after callback means submission returned, not completion. These events never
+enter compute cost statistics. After collection, each backend submission has a
+separate `completed` worker event linked by `submission_event_id`, with
+`timing_scope: rpc_worker_synchronized_host_wall` and an independent per-window
+`clock_domain`. Worker start_ms is relative to BEGIN on the worker; prepare time
+is separate from synchronized compute. Worker events have no client parent.
+Never subtract timestamps across clock domains or equate worker backend time to
+full scheduler/network time. Only completed timing events enter cost statistics;
+RPC scheduler graphs therefore remain unmeasured. A percentile with few samples
+is descriptive only. Request wall time includes the final batch collection.
 
-On successful scheduler execution without an eval callback, child backend events
+For synchronized observation (including structure/capture), successful scheduler execution without an eval callback means child backend events
 already fence the device streams. The scheduler retains its final synchronization
 but reuses those completion fences instead of performing another RPC read. Direct
 backend calls, scheduler entry, callback execution and failure paths retain their
 completion reads. A single-split RPC scheduler call therefore uses three reads
 instead of four; backend event timing still includes its own completion fence.
+This does not apply to RPC timing's submission observer, which adds no completion
+reads at graph boundaries. BEGIN is ordered but has no response; END returns a
+bounded, at least 4096-byte response and validates count, device, node count,
+GRAPH/RECOMPUTE and submission sequence. Capacity comes from the frozen case
+sequence (minimum 64, maximum 4096 records). Overflow or mismatched records fail
+the request. The collector exclusively owns the endpoint while a window is active.
 
 General cut legality, per-operator timing, pure network/DMA costs, overlap, memory
 peaks and remote worker metrics remain unavailable. Actual tensor-copy roundtrip
@@ -211,7 +232,8 @@ The candidate check covers topology closure, capture at execution boundaries, ex
 CPU replay, boundary timing, and rejection of an extra intermediate consumer.
 Real-model captures and paired observer-off controls are separate integration checks.
 
-The completion-read size is intentional: an integration probe through the deployed
+Candidate replay still uses completion-read timing; it is not converted into
+worker-only cost by this change. The completion-read size is intentional: an integration probe through the deployed
 SSH tunnel showed roughly 44 ms for 1/64-byte responses versus about 2.2 ms for
 4096-byte responses. This localizes the disturbance to the small-read path; it
 is not proof of the exact TCP/SSH mechanism. The bounded read preserves ordered
@@ -225,6 +247,9 @@ Optional RPC integration check against an existing worker:
 The probe also executes an explicitly placed CPU/RPC/CPU graph three times with
 changed inputs. It verifies the host-resident final output inside scheduler END,
 without an additional RPC read that could hide an early completion callback.
+It validates batch ordering, new/cached graph execution, window state, overflow,
+empty windows and reuse. Pass `legacy` after an older worker endpoint to verify
+that profiling is rejected locally without sending a new command.
 
 ```bash
 cmake --build build-profiler --target umm-profiler-rpc-fence-test -j 4
