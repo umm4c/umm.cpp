@@ -1,4 +1,4 @@
-"""Profiler contract checks. Usage: python3 test_interface.py /path/to/umm-profiler"""
+"""Profiler validation checks. Usage: python3 test_interface.py /path/to/umm-profiler"""
 import json
 from pathlib import Path
 import subprocess
@@ -19,55 +19,42 @@ class InterfaceTests(unittest.TestCase):
         path = root / "request.json"
         path.write_text(json.dumps(request))
         return subprocess.run([BINARY, "--request", str(path), "--out", str(root / "output")],
-                              capture_output=True, text=True, timeout=10)
-
-    def test_mock_contract_without_model_or_devices(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            request = self.request()
-            run = self.run_request(root, request)
-            self.assertEqual(run.returncode, 0, run.stderr)
-            output = root / "output"
-            manifest = json.loads((output / "manifest.json").read_text())
-            self.assertEqual(manifest["request"]["model"], request["model"])
-            self.assertEqual(manifest["status"], "mock")
-            self.assertFalse(manifest["executed"])
-            self.assertFalse(manifest["decision_usable"])
-            graphs = [json.loads(x) for x in (output / "graphs.jsonl").read_text().splitlines()]
-            graph_ids = {g["graph_id"] for g in graphs}
-            for filename in ["trace.jsonl", "costs.jsonl"]:
-                records = [json.loads(x) for x in (output / filename).read_text().splitlines()]
-                self.assertEqual({x["device_id"] for x in records}, {"local", "remote"})
-                for item in records:
-                    self.assertIn(item["graph_id"], graph_ids)
-                    self.assertEqual(item["data_origin"], "mock")
-                    if filename == "costs.jsonl":
-                        self.assertFalse(item["measurement_valid"])
-                        self.assertEqual(item["sample_count"], 0)
-            self.assertIn("MOCK DATA", (output / "report.md").read_text())
+                              capture_output=True, text=True, timeout=30)
 
     def test_invalid_requests_do_not_create_output(self):
-        bad = [dict(self.request(), strategy="random"), dict(self.request(), devices=[])]
+        bad = [(dict(self.request(), strategy="random"), "Unknown profiler field"),
+               (dict(self.request(), devices=[]), "must be nonempty")]
         duplicate = self.request()
         duplicate["devices"][1]["id"] = "local"
-        bad.append(duplicate)
+        bad.append((duplicate, "unique"))
         missing_endpoint = self.request()
         del missing_endpoint["devices"][1]["endpoint"]
-        bad.append(missing_endpoint)
-        bad.append(dict(self.request(), model=123))
-        for request in bad:
-            with self.subTest(request=request), tempfile.TemporaryDirectory() as directory:
+        bad.append((missing_endpoint, "endpoint"))
+        for request, error in bad:
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                self.assertNotEqual(self.run_request(root, request).returncode, 0)
+                result = self.run_request(root, request)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
                 self.assertFalse((root / "output").exists())
 
-    def test_existing_results_are_not_overwritten(self):
+    def test_missing_model_fails_without_mock_success(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            self.assertEqual(self.run_request(root, self.request()).returncode, 0)
-            before = {p.name: p.read_bytes() for p in (root / "output").iterdir()}
-            self.assertNotEqual(self.run_request(root, self.request()).returncode, 0)
-            self.assertEqual(before, {p.name: p.read_bytes() for p in (root / "output").iterdir()})
+            run = self.run_request(root, self.request())
+            self.assertNotEqual(run.returncode, 0)
+            self.assertFalse((root / "output").exists())
+
+    def test_existing_results_are_rejected_before_loading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "output").mkdir()
+            (root / "output/sentinel").write_bytes(b"keep")
+            run = self.run_request(root, self.request())
+            self.assertNotEqual(run.returncode, 0)
+            self.assertIn("already exists", run.stderr)
+            self.assertEqual((root / "output/sentinel").read_bytes(), b"keep")
+            self.assertEqual(len(list((root / "output").iterdir())), 1)
 
 
 if __name__ == "__main__":

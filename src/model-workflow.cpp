@@ -1,3 +1,4 @@
+#include "profile-context.h"
 #include "model-workflow.h"
 
 #include "llama-cpp-adapter.h"
@@ -203,7 +204,7 @@ void decode_bagel_reasoning(llama_cpp_adapter & engine, image_result & result, i
         }
         result.reasoning += piece;
         result.reasoning_tokens.push_back(token);
-        engine.append({token});
+        { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
     }
     engine.append(engine.tokenize("<|im_end|>"));
 }
@@ -218,7 +219,7 @@ void decode_u1_reasoning(llama_cpp_adapter & engine, image_result & result, int 
         }
         result.reasoning += piece;
         result.reasoning_tokens.push_back(token);
-        engine.append({token});
+        { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
     }
     engine.append(engine.tokenize("\n\n<img>"));
 }
@@ -244,7 +245,7 @@ std::string decode_bagel_answer(workflow_context & context, int max_tokens, bool
         if (engine.is_end(token)) {
             break;
         }
-        engine.append({token});
+        { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
     }
     return result;
 }
@@ -368,7 +369,7 @@ public:
                 if (engine.is_end(token) || piece == "</think>") {
                     break;
                 }
-                engine.append({token});
+                { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
             }
             engine.append(engine.tokenize("\n\n"));
         } else {
@@ -384,7 +385,7 @@ public:
                 break;
             }
             result += engine.piece(token);
-            engine.append({token});
+            { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
         }
         finish_text_decode(context);
         return result;
@@ -482,7 +483,7 @@ public:
             const auto piece = engine.piece(token);
             if (piece != "<img>") {
                 result.text += piece;
-                engine.append({token});
+                { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
                 ++text_tokens;
                 continue;
             }
@@ -495,7 +496,7 @@ public:
                 }
                 break;
             }
-            engine.append({token});
+            { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
             context.load_image_engine();
             context.transfer_prefix(conditioning_slot::conditional);
 

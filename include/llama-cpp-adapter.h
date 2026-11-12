@@ -79,6 +79,7 @@ public:
     size_t context_capacity() const { return llama_n_ctx(context_.get()); }
 
 private:
+    int decode_profiled(llama_batch batch, const char * phase);
     std::vector<float> token_embeddings(const std::vector<llama_token> & tokens);
     std::string architecture_;
     model_family family_ = model_family::unknown;
