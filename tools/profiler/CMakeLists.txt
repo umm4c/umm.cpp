@@ -27,5 +27,9 @@ if(GGML_RPC)
 endif()
 add_executable(umm-profiler-contract-test EXCLUDE_FROM_ALL test_graph_contract.cpp)
 target_compile_features(umm-profiler-contract-test PRIVATE cxx_std_17)
-target_include_directories(umm-profiler-contract-test PRIVATE "${UMM_PROFILER_ROOT}/src")
-target_link_libraries(umm-profiler-contract-test PRIVATE ggml Threads::Threads)
+target_include_directories(umm-profiler-contract-test PRIVATE "${UMM_PROFILER_ROOT}/src" "${UMM_PROFILER_ROOT}/third_party/stable-diffusion.cpp/thirdparty")
+target_link_libraries(umm-profiler-contract-test PRIVATE ggml Threads::Threads vendor::hash)
+
+# Use the restored upstream operator harness without enabling the full test suite.
+add_executable(test-backend-ops EXCLUDE_FROM_ALL "${UMM_PROFILER_ROOT}/third_party/llama.cpp/tests/test-backend-ops.cpp")
+target_link_libraries(test-backend-ops PRIVATE ggml Threads::Threads)

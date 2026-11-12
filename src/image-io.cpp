@@ -6,6 +6,7 @@
 #include "stb_image_write.h"
 
 #include "image-io.h"
+#include "../third_party/llama.cpp/common/base64.hpp"
 
 #include <stdexcept>
 #include <limits>
@@ -72,18 +73,7 @@ std::string png_base64(const umm::image_result & image) {
     if (!stbi_write_png_to_func(append, &bytes, image.width, image.height, 3, image.rgb.data(), image.width * 3)) {
         throw std::runtime_error("Could not encode PNG");
     }
-    std::string result;
-    result.reserve((bytes.size() + 2) / 3 * 4);
-    for (size_t i = 0; i < bytes.size(); i += 3) {
-        uint32_t word = uint32_t(bytes[i]) << 16;
-        if (i + 1 < bytes.size()) word |= uint32_t(bytes[i + 1]) << 8;
-        if (i + 2 < bytes.size()) word |= bytes[i + 2];
-        result += alphabet[(word >> 18) & 63];
-        result += alphabet[(word >> 12) & 63];
-        result += i + 1 < bytes.size() ? alphabet[(word >> 6) & 63] : '=';
-        result += i + 2 < bytes.size() ? alphabet[word & 63] : '=';
-    }
-    return result;
+    return ::base64::encode(reinterpret_cast<const char*>(bytes.data()),bytes.size());
 }
 
 umm::image_input read_image(const std::filesystem::path & path) {

@@ -214,6 +214,38 @@ used as a validated scheduling cost model.
 
 ## Checks
 
+Structure capture now collects one `graph_description`, shared by JSON export,
+placement/logical identity and the frozen contract. Timed checks still traverse
+preallocated contract storage without JSON, hashing or old tensor addresses.
+Graph IDs and the v3 output schema are preserved. SHA256 and Base64 encoding
+reuse the vendored implementations; file hashes remain streaming and image-input
+validation is unchanged. Graph/candidate timing distributions share one helper.
+
+Use existing generic tools instead of extending this profiler with synthetic
+operator/model benchmarks. The fork's deleted `test-backend-ops.cpp` is restored
+byte-for-byte from `e64a524ad12643355080d4cc668743b25e928c8f`; its public GGML API
+remains compatible. The root exposes this upstream harness as an
+`EXCLUDE_FROM_ALL` target, without enabling the incomplete full upstream test suite
+or adding a new build flag:
+
+```bash
+cmake -S . -B build-profiler -DGGML_CANN=ON -DGGML_RPC=ON -DSOC_TYPE=Ascend310P3
+cmake --build build-profiler --target test-backend-ops -j 4
+build-profiler/bin/test-backend-ops test -o ADD -b CANN0 -p 'ne=\[10,5,1,1\]'
+build-profiler/bin/test-backend-ops perf -o ADD -b CANN0 -p 'ne=\[4096,1,1,1\]'
+```
+
+For generic text throughput, use `third_party/llama.cpp/tools/llama-bench` and
+`scripts/compare-llama-bench.py` in a standalone llama.cpp tools/common build.
+Match model/context/backend/NZ settings first; when using RPC, both sides must
+also use `GGML_MAX_NAME=160`. This does not substitute for real U1 multimodal
+workloads or native-resident candidate replay. Graph-copy comparison remains a
+diagnostic path because it allocates/copies reachable tensors, including weights.
+
+Offline hardware inspection uses [msprof-import](../../../utils/msprof-import/README.md)
+with existing CANN exports. It does not collect hardware traces inside ordinary
+timing passes or infer cross-host clock offsets/node-to-kernel mappings.
+
 ```bash
 cmake --build build-profiler --target umm-profiler-observer-test umm-profiler-candidate-test umm-profiler-contract-test -j 4
 build-profiler/bin/umm-profiler-candidate-test
