@@ -1,3 +1,4 @@
+#include "profile-context.h"
 #include "session.h"
 #include "execution-policy.h"
 
@@ -228,6 +229,7 @@ void session::impl::append_native_image(const image_input & image) {
     load_image_engine();
     const auto start = metrics_clock::now();
     const auto stride = model_descriptor_for(model_family::sensenova_u1).image_stride;
+    profiling::phase_scope profile_scope("vision_encode");
     const auto embeddings = encode_u1_image_with_diffusion(image_engine.get(), image);
     if (active_metrics) {
         active_metrics->image_encoder_ms = std::max(0.0, active_metrics->image_encoder_ms) + metrics_elapsed_ms(start);
@@ -312,6 +314,7 @@ workflow_context session::impl::workflow_context_for_request() {
     context.encode_u1_prefill_image = [this](const image_input & image) {
         load_image_engine();
         const auto start = metrics_clock::now();
+        profiling::phase_scope profile_scope("vision_encode");
         auto embeddings = encode_u1_image_with_diffusion(image_engine.get(), image);
         if (active_metrics) {
             const auto duration = metrics_elapsed_ms(start);
@@ -378,6 +381,7 @@ std::string session::text(const std::string & prompt, int max_tokens, request_me
             ++metrics->output_tokens;
         }
         result += piece;
+        profiling::phase_scope decode_phase("understanding_decode");
         engine.append({token});
     }
     if (metrics) {

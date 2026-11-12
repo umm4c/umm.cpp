@@ -420,8 +420,14 @@ auto image = session.image("Design a clear illustration of the water cycle.", op
 
 See [session.h](include/session.h) for the public interface and defaults.
 
-## Profiler interface prototype
+## Graph profiler
 
-The independent [profiler interface](tools/profiler/README.md) accepts a model, device list
-and representative workload. It currently exports explicitly marked mock data
-without loading models or accessing devices.
+Existing captures can be explored with the offline [Graph Atlas viewer](../utils/profiler-viewer/README.md): folded layers, operator dependencies, exact candidate boundaries and measured cost comparisons.
+
+The [profiler](tools/profiler/README.md) replays a model and representative workload
+on a device list, exporting real graphs, placement and synchronized host timings.
+The first collector supports SenseNova U1 with local 310P and existing CANN RPC
+workers. It automatically selects closed FFN candidates, captures real boundary
+inputs in a separate pass, and measures isolated compute and actual tensor-copy
+roundtrips on each device. Full-plan legality, kernel timings and validated
+scheduling decisions remain future work.

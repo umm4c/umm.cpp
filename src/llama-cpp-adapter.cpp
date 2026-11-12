@@ -1,3 +1,4 @@
+#include "profile-context.h"
 #include "llama-cpp-adapter.h"
 #include "execution-policy.h"
 
@@ -169,6 +170,11 @@ ggml_backend_sched_t llama_cpp_adapter::scheduler() const {
     return context_->get_sched();
 }
 
+int llama_cpp_adapter::decode_profiled(llama_batch batch, const char * phase) {
+    profiling::phase_scope scope(std::string(profiling::current_phase.phase) == "understanding_decode" ? "understanding_decode" : phase, batch.n_tokens, tokens_.size());
+    return llama_decode(context_.get(), batch);
+}
+
 void llama_cpp_adapter::synchronize() {
     llama_synchronize(context_.get());
 }
@@ -204,7 +210,7 @@ void llama_cpp_adapter::append(const std::vector<llama_token> & tokens, bool nee
         if (metrics) synchronize();
         const auto start = metrics_clock::now();
         has_logits_ = false;
-        if (llama_decode(context_.get(), batch) != 0) {
+        if (decode_profiled(batch, "understanding_prefill") != 0) {
             throw std::runtime_error("Understanding decode failed");
         }
         if (metrics) synchronize();
@@ -258,7 +264,7 @@ void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> &
     batch.seq_id = seq_ids.data();
     batch.logits = outputs.data();
     llama_set_causal_attn(context_.get(), false);
-    const int status = llama_decode(context_.get(), batch);
+    const int status = decode_profiled(batch, "understanding_prefill");
     llama_set_causal_attn(context_.get(), true);
     if (status) throw std::runtime_error("Image understanding decode failed");
     const auto offset = tokens_.size();
@@ -341,7 +347,7 @@ void llama_cpp_adapter::append_u1_image_body(const std::vector<float> & embeddin
     if (metrics) synchronize();
     const auto start = metrics_clock::now();
     has_logits_ = false;
-    const int status = llama_decode(context_.get(), batch);
+    const int status = decode_profiled(batch, "understanding_prefill");
     if (status) {
         throw std::runtime_error("SenseNova U1 image understanding decode failed");
     }
@@ -458,7 +464,7 @@ void llama_cpp_adapter::append_u1_mixed(const std::vector<u1_prefill_segment> & 
         batch.seq_id = sequences.data();
         batch.logits = outputs.data();
         has_logits_ = false;
-        if (llama_decode(context_.get(), batch) != 0) throw std::runtime_error("Mixed SenseNova prefill failed");
+        if (decode_profiled(batch, "understanding_prefill") != 0) throw std::runtime_error("Mixed SenseNova prefill failed");
         if (metrics) synchronize();
         record_prefill(metrics, contains_image ? "mixed" : "text", tokens_.size(), ids.size(),
                        outputs.back(), metrics_elapsed_ms(start));
