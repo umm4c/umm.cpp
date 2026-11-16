@@ -7,6 +7,9 @@
 #include "execution-policy.h"
 #include "model-package.h"
 #include "ggml-backend.h"
+#ifdef GGML_USE_RPC
+#include "ggml-rpc.h"
+#endif
 extern "C" {
 #include "sha256.h"
 }
@@ -14,7 +17,6 @@ extern "C" {
 #include <array>
 #include <chrono>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -24,21 +26,13 @@ extern "C" {
 #include <set>
 #include <sstream>
 #include <stdexcept>
-#include <unordered_map>
 
 namespace umm::profiling {
 using json = nlohmann::json;
 using clock = std::chrono::steady_clock;
 namespace {
 double elapsed(clock::time_point start) { return std::chrono::duration<double, std::milli>(clock::now()-start).count(); }
-std::string hash(const std::string & value) {
-    sha256_t state; sha256_init(&state);
-    sha256_update(&state, reinterpret_cast<const unsigned char*>(value.data()), value.size());
-    unsigned char digest[32]; sha256_final(&state, digest);
-    std::ostringstream out;
-    for (auto byte : digest) out << std::hex << std::setw(2) << std::setfill('0') << int(byte);
-    return out.str();
-}
+using detail::hash;
 std::string read(const std::filesystem::path & path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) throw std::invalid_argument("Cannot read " + path.string());
@@ -56,21 +50,6 @@ std::string file_hash(const std::filesystem::path & path) {
     for(auto byte:digest)out<<std::hex<<std::setw(2)<<std::setfill('0')<<int(byte);
     return out.str();
 }
-std::string base64(const std::string & bytes) {
-    constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    for (size_t i=0; i<bytes.size(); i+=3) {
-        uint32_t word=uint32_t(uint8_t(bytes[i]))<<16;
-        if (i+1<bytes.size()) word|=uint32_t(uint8_t(bytes[i+1]))<<8;
-        if (i+2<bytes.size()) word|=uint8_t(bytes[i+2]);
-        out+=alphabet[(word>>18)&63]; out+=alphabet[(word>>12)&63];
-        out+=i+1<bytes.size()?alphabet[(word>>6)&63]:'='; out+=i+2<bytes.size()?alphabet[word&63]:'=';
-    }
-    return out;
-}
-bool metadata(ggml_op op) {
-    return op==GGML_OP_NONE || op==GGML_OP_VIEW || op==GGML_OP_RESHAPE || op==GGML_OP_TRANSPOSE || op==GGML_OP_PERMUTE;
-}
 struct environment {
     std::map<std::string, std::pair<bool,std::string>> old;
     void set(const std::string & key, const std::string & value) {
@@ -86,82 +65,16 @@ struct capture {
     std::string pass="structure";
     int replay=0;
     bool warmup=false;
+    bool remote_timing=false;
     clock::time_point origin=clock::now();
     struct frame {std::string graph_id,event_id,parent;clock::time_point start;double export_ms;};
     std::vector<frame> stack;
     std::set<std::string> seen;
-    struct binding {std::string id,phase;std::unique_ptr<graph_contract> contract;};
+    struct binding {std::string id,phase;std::unique_ptr<graph_contract> contract;bool scheduler=false;};
     std::map<std::string,std::vector<binding>> bindings;
     size_t execution_cursor=0;
     size_t event_number=0;
     std::map<std::string,std::vector<double>> samples;
-    json describe(ggml_backend_t backend,ggml_backend_sched_t sched,ggml_cgraph * graph) {
-        json nodes=json::array(),tensors=json::array(),splits=json::array();
-        std::unordered_map<const ggml_tensor*,int> ids;
-        std::vector<const ggml_tensor*> ordered;
-        auto add=[&](const ggml_tensor * t) { if(t && !ids.count(t)) {ids[t]=int(ordered.size());ordered.push_back(t);} };
-        for(int i=0;i<ggml_graph_n_nodes(graph);++i) add(ggml_graph_node(graph,i));
-        for(size_t i=0;i<ordered.size();++i) {auto t=ordered[i];add(t->view_src);for(auto src:t->src)add(src);}
-        auto id=[&](const ggml_tensor * t) {return "t"+std::to_string(ids.at(t));};
-        std::unordered_map<const ggml_tensor*,int> node_ids;
-        for(int i=0;i<ggml_graph_n_nodes(graph);++i) node_ids[ggml_graph_node(graph,i)]=i;
-        for(auto t:ordered) {
-            json shape=json::array(),strides=json::array();for(int axis=0;axis<GGML_MAX_DIMS;++axis){shape.push_back(t->ne[axis]);strides.push_back(t->nb[axis]);}
-            auto root=t;while(root->view_src)root=root->view_src;
-            std::string role=node_ids.count(t)?"activation":"unknown";
-            if(root->buffer && ggml_backend_buffer_get_usage(root->buffer)==GGML_BACKEND_BUFFER_USAGE_WEIGHTS)role="weight";
-            else if(t->flags&GGML_TENSOR_FLAG_INPUT)role="input";
-            json params=json::array();for(size_t k=0;k<GGML_MAX_OP_PARAMS;++k)params.push_back(reinterpret_cast<const uint8_t*>(t->op_params)[k]);
-            tensors.push_back({{"id",id(t)},{"name",t->name},{"shape",shape},{"strides_bytes",strides},
-                {"dtype",ggml_type_name(t->type)},{"bytes",ggml_nbytes(t)},{"role",role},
-                {"layout",ggml_is_contiguous(t)?"contiguous":"strided"},{"layout_scope","logical_ggml"},{"backend_layout",nullptr},
-                {"flags",t->flags},{"alias_of",t->view_src?json(id(t->view_src)):json(nullptr)},
-                {"view_offset_bytes",t->view_offs},{"storage_id",id(root)}, {"op_params_bytes",params},
-                {"buffer_type",root->buffer?json(ggml_backend_buft_name(ggml_backend_buffer_get_type(root->buffer))):json(nullptr)}});
-        }
-        for(int i=0;i<ggml_graph_n_nodes(graph);++i) {
-            auto t=ggml_graph_node(graph,i);auto target=backend?backend:ggml_backend_sched_get_tensor_backend(sched,t);
-            json inputs=json::array(),deps=json::array();
-            for(auto src:t->src)if(src){inputs.push_back(id(src));if(node_ids.count(src))deps.push_back(node_ids.at(src));}
-            if(!metadata(t->op) && (!target || std::string(ggml_backend_dev_name(ggml_backend_get_device(target)))!=requested_backend)) throw std::runtime_error("Unexpected compute device in profile graph");
-            nodes.push_back({{"id",i},{"tensor_id",id(t)},{"op",ggml_op_name(t->op)}, {"inputs",inputs},
-                {"dependencies",deps},{"outputs",{id(t)}},{"actual_device",target?json(ggml_backend_dev_name(ggml_backend_get_device(target))):json(nullptr)},
-                {"may_write_inputs",nullptr},{"persistent_state",nullptr}});
-        }
-        if(sched)for(int i=0;i<ggml_backend_sched_get_n_splits(sched);++i){ggml_backend_sched_split_info info{};
-            if(!ggml_backend_sched_get_split_info(sched,i,&info))throw std::runtime_error("Cannot inspect scheduler split");
-            splits.push_back({{"id",i},{"node_start",info.node_start},{"node_end_exclusive",info.node_end},
-                {"device",ggml_backend_dev_name(ggml_backend_get_device(info.backend))},{"weight_input_bytes",info.weight_input_bytes}});}
-        return {{"schema_version","umm-profiler-graph/v3"},{"data_origin","measured"},
-            {"phase",current_phase.phase},{"example_submission",{{"tokens",current_phase.tokens<0?json(nullptr):json(current_phase.tokens)},{"cached_tokens",current_phase.cached_tokens<0?json(nullptr):json(current_phase.cached_tokens)}}},
-            {"kind",sched?"scheduler":"backend"},{"nodes",nodes},{"tensors",tensors},{"actual_splits",splits},
-            {"cut_boundaries",json::array()},{"legality","not_analyzed"}};
-    }
-    std::string signature(ggml_backend_t backend,ggml_backend_sched_t sched,ggml_cgraph * graph,bool placement) {
-        std::string data;auto append=[&](const auto & value){data.append(reinterpret_cast<const char*>(&value),sizeof(value));};
-        auto text=[&](const char * value){size_t size=std::strlen(value);append(size);data.append(value,size);};
-        text(current_phase.phase);bool scheduler=sched!=nullptr;append(scheduler);
-        std::unordered_map<const ggml_tensor*,int> ids;std::vector<const ggml_tensor*> ordered;
-        auto add=[&](const ggml_tensor * t){if(t&&!ids.count(t)){ids[t]=int(ordered.size());ordered.push_back(t);}};
-        int count=ggml_graph_n_nodes(graph);append(count);for(int i=0;i<count;++i)add(ggml_graph_node(graph,i));
-        for(size_t i=0;i<ordered.size();++i){add(ordered[i]->view_src);for(auto src:ordered[i]->src)add(src);}
-        auto named_backend=backend;
-        if(!named_backend && sched)for(int i=0;i<count;++i){
-            auto target=ggml_backend_sched_get_tensor_backend(sched,ggml_graph_node(graph,i));
-            if(target && requested_backend==ggml_backend_dev_name(ggml_backend_get_device(target))){named_backend=target;break;}
-        }
-        const std::string copy_prefix=std::string(named_backend?ggml_backend_name(named_backend):requested_backend.c_str())+"#";
-        for(auto t:ordered){
-            // Scheduler copy names embed the device even when the math graph is identical.
-            const char * name=t->name;
-            if(!placement && std::strncmp(name,copy_prefix.c_str(),copy_prefix.size())==0)name+=copy_prefix.size();
-            text(name);append(t->op);append(t->type);append(t->flags);data.append(reinterpret_cast<const char*>(t->ne),sizeof(t->ne));data.append(reinterpret_cast<const char*>(t->nb),sizeof(t->nb));
-            data.append(reinterpret_cast<const char*>(t->op_params),GGML_MAX_OP_PARAMS);append(t->view_offs);int view=t->view_src?ids.at(t->view_src):-1;append(view);
-            for(auto src:t->src){int id=src?ids.at(src):-1;append(id);}
-            if(placement){auto root=t;while(root->view_src)root=root->view_src;text(root->buffer?ggml_backend_buft_name(ggml_backend_buffer_get_type(root->buffer)):"");}
-        }
-        if(placement)text(requested_backend.c_str());return hash(data);
-    }
     bool observe(ggml_backend_t backend,ggml_backend_sched_t sched,ggml_cgraph * graph,bool completed,ggml_status status) {
         if(pass=="capture") {
             if(sched){if(!completed)catalog->begin_capture(sched,graph,case_id);else catalog->end_capture(sched);}
@@ -170,10 +83,12 @@ struct capture {
         if(!completed) {
             auto start=clock::now();std::string fingerprint;
             if(pass=="structure"){
-                fingerprint=signature(backend,sched,graph,true);
-                if(seen.insert(fingerprint).second){auto description=describe(backend,sched,graph);description["graph_id"]=fingerprint;description["logical_graph_id"]=signature(backend,sched,graph,false);description["device_id"]=device_id;output.graphs.push_back(std::move(description));}
+                auto contract=std::make_unique<graph_contract>(backend,sched,graph);
+                const auto & descriptor=contract->description();
+                fingerprint=descriptor.signature(current_phase.phase,requested_backend,true);
+                if(seen.insert(fingerprint).second){auto description=descriptor.describe(current_phase.phase,current_phase.tokens,current_phase.cached_tokens,requested_backend);description["graph_id"]=fingerprint;description["logical_graph_id"]=descriptor.signature(current_phase.phase,requested_backend,false);description["device_id"]=device_id;output.graphs.push_back(std::move(description));}
                 if(sched)catalog->discover(graph,fingerprint);
-                bindings[case_id].push_back({fingerprint,current_phase.phase,std::make_unique<graph_contract>(backend,sched,graph)});
+                bindings[case_id].push_back({fingerprint,current_phase.phase,std::move(contract),sched!=nullptr});
             }else{
                 auto & sequence=bindings.at(case_id);
                 if(execution_cursor>=sequence.size())throw std::runtime_error("Execution has more graphs than frozen structure");
@@ -194,9 +109,11 @@ struct capture {
                 {"submission",{{"tokens",current_phase.tokens},{"cached_tokens",current_phase.cached_tokens}}},
                 {"start_ms",std::chrono::duration<double,std::milli>(f.start-origin).count()},
                 {"duration_ms",duration},{"export_before_ms",f.export_ms},{"status",int(status)},
-                {"timing_scope","synchronized_host_wall"},{"executed",true},{"kernel_ms",nullptr}});
+                {"timing_scope",remote_timing?"client_submission_host_wall":"synchronized_host_wall"},
+                {"event_type",remote_timing?"submitted":"completed"},{"clock_domain","client:"+device_id},
+                {"executed",true},{"kernel_ms",nullptr}});
             if(status!=GGML_STATUS_SUCCESS)throw std::runtime_error("Graph execution failed");
-            if(!warmup)samples[f.graph_id].push_back(duration);
+            if(!warmup && !remote_timing)samples[f.graph_id].push_back(duration);
         }
         return true;
     }
@@ -206,8 +123,75 @@ struct capture {
     }
 };
 struct observer_scope {
-    explicit observer_scope(capture & c){ggml_backend_set_graph_observer(capture::callback,&c);}
-    ~observer_scope(){ggml_backend_set_graph_observer(nullptr,nullptr);}
+    bool submission;
+    explicit observer_scope(capture & c):submission(c.remote_timing){
+        if(submission)ggml_backend_set_graph_submission_observer(capture::callback,&c);
+        else ggml_backend_set_graph_observer(capture::callback,&c);
+    }
+    ~observer_scope(){if(submission)ggml_backend_set_graph_submission_observer(nullptr,nullptr);else ggml_backend_set_graph_observer(nullptr,nullptr);}
+};
+
+// One window per request; its final response fences the ordered worker stream.
+class rpc_batch {
+#ifdef GGML_USE_RPC
+    ggml_backend_t backend=nullptr;
+    uint64_t sequence=0,active=0;
+    std::vector<ggml_rpc_profile_record> records;
+    uint32_t drain(){uint32_t count=0;auto window=active;active=0;
+        if(!ggml_backend_rpc_profile_end(backend,window,records.data(),uint32_t(records.size()),&count))throw std::runtime_error("RPC profile records missing, overflowed or out of order");
+        return count;
+    }
+#endif
+public:
+    explicit rpc_batch(const std::string & name){
+#ifdef GGML_USE_RPC
+        backend=ggml_backend_init_by_name(name.c_str(),nullptr);
+        if(!backend)throw std::runtime_error("Cannot initialize RPC profiling backend");
+        try{start(1);if(drain()!=0)throw std::runtime_error("RPC profiling probe returned unexpected graphs");}
+        catch(...){ggml_backend_free(backend);backend=nullptr;throw;}
+#else
+        (void)name;throw std::runtime_error("RPC profiling requires GGML_RPC=ON");
+#endif
+    }
+    ~rpc_batch(){
+#ifdef GGML_USE_RPC
+        if(active){uint32_t count=0;ggml_backend_rpc_profile_end(backend,active,records.data(),uint32_t(records.size()),&count);}
+        if(backend)ggml_backend_free(backend);
+#endif
+    }
+    void start(size_t expected){
+#ifdef GGML_USE_RPC
+        if(expected>GGML_RPC_PROFILE_MAX_RECORDS)throw std::runtime_error("RPC request exceeds profiling record capacity");
+        records.resize(std::max(size_t(64),expected));
+        auto window=++sequence;
+        if(!ggml_backend_rpc_profile_begin(backend,window,uint32_t(records.size())))throw std::runtime_error("RPC worker does not support batch timing or a window is already active; requires protocol 6.1");
+        active=window;
+#else
+        (void)expected;
+#endif
+    }
+    void finish(capture & c,size_t trace_start){
+#ifdef GGML_USE_RPC
+        const auto window=active;const auto count=drain();
+        std::vector<size_t> submissions;
+        const auto end=c.output.trace.size();
+        for(size_t i=trace_start;i<end;++i)if(c.output.trace[i].at("kind")=="backend")submissions.push_back(i);
+        if(count!=submissions.size())throw std::runtime_error("RPC records do not match frozen graph submissions");
+        for(size_t i=0;i<count;++i){const auto & record=records[i];auto event=c.output.trace[submissions[i]];
+            const auto submitted_id=event.at("event_id").get<std::string>();
+            event["event_id"]=submitted_id+"-worker";event["submission_event_id"]=submitted_id;event["parent_event_id"]=nullptr;
+            event["clock_domain"]="worker:"+c.device_id+":"+std::to_string(window);event["window_id"]=window;
+            event["event_type"]="completed";event["timing_scope"]="rpc_worker_synchronized_host_wall";
+            event["start_ms"]=(double(record.start_ns)+double(record.prepare_ns))/1e6;event["duration_ms"]=double(record.compute_ns)/1e6;
+            event["export_before_ms"]=0;event["worker_prepare_ms"]=double(record.prepare_ns)/1e6;
+            event["worker_sequence"]=record.sequence;event["worker_device"]=record.device;event["worker_nodes"]=record.n_nodes;event["worker_reused"]=bool(record.reused);
+            event["status"]=record.status;c.samples[event.at("graph_id").get<std::string>()].push_back(double(record.compute_ns)/1e6);
+            c.output.trace.push_back(std::move(event));
+        }
+#else
+        (void)c;(void)trace_start;
+#endif
+    }
 };
 }
 result profile(const request & input) {
@@ -239,7 +223,7 @@ result profile(const request & input) {
             const auto digest=hash(bytes);
             if(item.contains("sha256") && item.at("sha256")!=digest)throw std::invalid_argument("Workload image hash mismatch");
             const auto mime=bytes.size()>=8 && bytes.compare(0,8,std::string("\x89PNG\r\n\x1a\n",8))==0?"image/png":"image/jpeg";
-            item["data_url"]=std::string("data:")+mime+";base64,"+base64(bytes);item.erase("path");item.erase("sha256");
+            item["data_url"]=std::string("data:")+mime+";base64,"+::base64::encode(bytes);item.erase("path");item.erase("sha256");
         }
         max_images=std::max(max_images,images);cases.push_back(std::move(c));
     }
@@ -273,6 +257,8 @@ result profile(const request & input) {
             if(std::string(ggml_backend_dev_description(dev)).find("310P")==std::string::npos)throw std::invalid_argument("Local profiling currently requires Ascend310P");
         }
         env.set("GGML_REQUIRED_DEVICE",backend);c.requested_backend=backend;
+        std::unique_ptr<rpc_batch> batch;
+        if(d.transport=="rpc")batch=std::make_unique<rpc_batch>(backend);
         if(!primary.ptr && d.transport=="local"){primary.ptr=ggml_backend_init_by_name(backend.c_str(),nullptr);if(!primary.ptr)throw std::runtime_error("Cannot initialize primary backend");primary_id=d.id;}
         runtime::options options={{"--model",model.string()},{"--understanding-backend",backend},{"--generation-backend",backend},
             {"--vision-backend",backend},{"--generation-max-vram",backend+"=40"},{"--steps",fast_lora?"8":"50"},{"--cfg",fast_lora?"1":"4"},{"--shift","3"},
@@ -294,11 +280,14 @@ result profile(const request & input) {
             std::cerr<<"profiler: device="<<d.id<<" pass="<<c.pass<<" replay="<<replay<<std::endl;
             for(const auto & item:cases) {
                 c.case_id=item.at("case_id").get<std::string>();c.execution_cursor=0;
+                c.remote_timing=d.transport=="rpc" && c.pass=="timing";
                 const auto phase=item.at("task_class")=="image_generation"?"generation":"request";
                 phase_scope scope(phase);const auto trace_start=out.trace.size();
                 json response;const auto request_start=clock::now();
+                if(c.remote_timing){size_t expected_graphs=0;for(const auto & binding:c.bindings.at(c.case_id))expected_graphs+=!binding.scheduler;batch->start(expected_graphs);}
                 if(c.pass=="baseline")response=runtime::run_case(engine,item,options,true);
                 else {observer_scope observation(c);response=runtime::run_case(engine,item,options,true);}
+                if(c.remote_timing)batch->finish(c,trace_start);
                 const double wall=elapsed(request_start);
                 if(c.pass=="timing" && c.error.empty() && c.execution_cursor!=c.bindings.at(c.case_id).size())throw std::runtime_error("Execution has fewer graphs than frozen structure");
                 if(!c.error.empty())throw std::runtime_error(c.error);
@@ -321,12 +310,12 @@ result profile(const request & input) {
         for(const auto & item:baseline_ms){json pairs=json::array();for(size_t i=0;i<item.second.size();++i)pairs.push_back({{"baseline_ms",item.second[i]},{"timing_ms",timed_ms.at(item.first).at(i)},{"observed_delta_ms",timed_ms.at(item.first).at(i)-item.second[i]}});
             overhead.push_back({{"device_id",d.id},{"case_id",item.first},{"paired_replays",pairs},{"interpretation","includes_runtime_variation_and_observation_overhead_not_a_correction_factor"}});}
         for(auto & entry:c.samples) {
-            auto & values=entry.second;std::sort(values.begin(),values.end());double sum=0;for(auto v:values)sum+=v;
-            auto quantile=[&](double q){double index=q*(values.size()-1);size_t a=size_t(index),b=std::min(a+1,values.size()-1);return values[a]+(values[b]-values[a])*(index-a);};
+            const auto count=entry.second.size();auto duration=detail::sample_statistics(entry.second);
+            duration.erase("sample_count");duration.erase("samples");
             out.costs.push_back({{"schema_version","umm-profiler-cost/v3"},{"data_origin","measured"},{"graph_id",entry.first},
-                {"device_id",d.id},{"sample_count",values.size()},{"state","post_warmup_replay"},
-                {"duration_ms",{{"mean",sum/values.size()},{"p50",quantile(.5)},{"p95",quantile(.95)},{"min",values.front()},{"max",values.back()}}},
-                {"timing_scope","synchronized_host_wall"},{"measurement_valid",true},{"decision_usable",false},
+                {"device_id",d.id},{"sample_count",count},{"state","post_warmup_replay"},
+                {"duration_ms",duration},
+                {"timing_scope",d.transport=="rpc"?"rpc_worker_synchronized_host_wall":"synchronized_host_wall"},{"measurement_valid",true},{"decision_usable",false},
                 {"memory_peak_bytes",nullptr},{"transfer",nullptr},{"overlap",nullptr},{"kernel_ms",nullptr}});
         }
     }
@@ -334,10 +323,10 @@ result profile(const request & input) {
     out.manifest={{"schema_version","umm-profiler/v3"},{"data_origin","measured"},{"status","completed"},{"executed",true},
         {"decision_usable",false},{"request",request_json},{"identity",{{"model_manifest_sha256",hash(model_manifest)},{"model_components_sha256",components},{"profiler_binary_sha256",std::filesystem::exists("/proc/self/exe")?json(file_hash("/proc/self/exe")):json(nullptr)},{"devices",identities}}},
         {"workload",{{"case_count",cases.size()},{"cases_sha256",hash(raw_cases)},{"manifest",workload_manifest},{"cases",original_cases}}},
-        {"measurement",{{"passes",{"structure","capture","baseline","timing","baseline","timing"}},{"measured_replays",2},{"observation_overhead",overhead},{"candidate_measurement","two_warmups_five_repetitions_native_weights_real_snapshot"},{"serial_devices",true},{"graph_synchronization",true},{"rpc_completion_fence","bounded_tensor_read_up_to_4096_bytes"},{"rpc_scheduler_completion","reuse_successful_child_fences_without_eval_callback"},
+        {"measurement",{{"passes",{"structure","capture","baseline","timing","baseline","timing"}},{"measured_replays",2},{"observation_overhead",overhead},{"candidate_measurement","two_warmups_five_repetitions_native_weights_real_snapshot"},{"serial_devices",true},{"graph_synchronization",true},{"rpc_completion_fence","bounded_tensor_read_up_to_4096_bytes"},{"rpc_scheduler_completion","reuse_successful_child_fences_without_eval_callback"},{"rpc_timing","worker_batch_per_request"},{"rpc_profile_protocol","6.1"},{"rpc_submission_scope","client_submission_host_wall"},
             {"timing_scope","synchronized_host_wall"},{"nested_events_are_not_additive",true},{"capture_overhead_in_parent_events",true},{"full_json_export_in_timing_pass",false},{"structural_hash_in_timing_pass",false},{"identity_resolution","frozen_case_execution_contract"},{"contract_validation","all_tensor_metadata_topology_and_devices_without_hash"}}},
         {"coverage",{{"workload_loaded",true},{"device_probed",true},{"cut_legality",false},{"isolated_ffn_replay",true},{"selected_boundary_roundtrip",true},{"operator_timing",false},
-            {"remote_worker_metrics",false},{"phase_coverage","understanding prefill/decode, U1 vision, coarse generation"},
+            {"remote_worker_metrics",std::any_of(devices.begin(),devices.end(),[](const auto & d){return d.transport=="rpc";})},{"phase_coverage","understanding prefill/decode, U1 vision, coarse generation"},
             {"correctness",stable?"within_device_output_repeatable":"within_device_output_changed"}}},
         {"artifacts",{"graphs.jsonl","trace.jsonl","costs.jsonl","requests.jsonl","candidates.jsonl","candidate-costs.jsonl","snapshots.jsonl","report.md"}}};
     out.report="# Structure-led candidate profiler\n\n"
@@ -345,7 +334,7 @@ result profile(const request & input) {
         "Candidate extraction currently recognizes closed, contiguous F32-boundary SwiGLU FFNs with three resident model weights. It rejects views and external consumers of intermediate values. It ranks by estimated matrix FLOPs per boundary byte, selecting one layer per input shape, at most four shapes in first-observed order. This is a structural heuristic, not a profitability proof.\n\n"
         "Selected inputs and reference outputs are captured at scheduler execution boundaries in a separate untimed pass. All devices replay the same canonical inputs with their native resident model weights. Snapshots reference the model hashes and weight identities; weights are not re-uploaded for each measurement. Candidate execution uses two warmups and five timed repetitions.\n\n"
         "Candidate costs include compute, copy-only boundary roundtrip, and boundary plus compute where a local primary is available. Boundary copies use the actual GGML tensor-copy path. The local copy roundtrip is an artificial control; native execution uses the compute-only baseline. Full F32 output error is checked against the captured reference (atol=.05, rtol=.005); this is not end-to-end model quality acceptance.\n\n"
-        "Timings use synchronized host wall intervals with an RPC completion-read fence, not kernel time. Full JSON export is excluded from timing passes, but frozen-contract validation, synchronization and completion reads still perturb execution. Structure hashing runs only in the structure pass; timed requests use registered graph IDs and verify immutable metadata/topology/device contracts without hashing or serialization. Paired observer-off baselines quantify the observed change, including runtime variation. Nested scheduler/backend intervals overlap and must not be summed.\n\n"
+        "Local and structure/capture timings use synchronized host wall intervals with RPC completion-read fences where applicable. RPC timing passes instead collect client submission events without added waits, then fetch worker execution records once per request using protocol 6.1. Only completed worker records enter remote graph costs; worker timestamps are in separate per-window clock domains. These are synchronized worker host intervals, not kernel time. Full JSON export is excluded from timing passes; frozen-contract checks and batch collection still perturb execution. Structure hashing runs only in the structure pass; timed requests use registered graph IDs and verify immutable metadata/topology/device contracts without hashing or serialization. Paired observer-off baselines quantify the observed change, including runtime variation. Nested scheduler/backend intervals overlap and must not be summed.\n\n"
         "Decision usability remains false: isolated replay eligibility does not establish production cut legality, plan correctness, unseen-shape coverage, memory capacity, or end-to-end scheduling benefit. No production scheduling policy changes are made.\n";
     return out;
 }

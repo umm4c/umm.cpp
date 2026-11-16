@@ -55,10 +55,7 @@ json dimensions(const ggml_tensor * t){return {t->ne[0],t->ne[1],t->ne[2],t->ne[
 struct context_owner {ggml_context * ptr=nullptr;~context_owner(){if(ptr)ggml_free(ptr);} };
 struct buffer_owner {ggml_backend_buffer_t ptr=nullptr;~buffer_owner(){if(ptr)ggml_backend_buffer_free(ptr);} };
 std::vector<uint8_t> bytes(ggml_tensor * t){std::vector<uint8_t> out(ggml_nbytes(t));ggml_backend_tensor_get(t,out.data(),0,out.size());return out;}
-json stats(std::vector<double> x){std::sort(x.begin(),x.end());double sum=0;for(auto v:x)sum+=v;
-    auto q=[&](double f){double n=f*(x.size()-1);size_t a=size_t(n),b=std::min(a+1,x.size()-1);return x[a]+(x[b]-x[a])*(n-a);};
-    return {{"sample_count",x.size()},{"mean",sum/x.size()},{"p50",q(.5)},{"p95",q(.95)},{"min",x.front()},{"max",x.back()},{"samples",x}};
-}
+using detail::sample_statistics;
 void completed(ggml_backend_t backend,ggml_tensor * output){ggml_backend_synchronize(backend);
     auto reg=ggml_backend_dev_backend_reg(ggml_backend_get_device(backend));
     if(reg && std::string(ggml_backend_reg_name(reg)).rfind("RPC",0)==0){std::array<unsigned char,4096> bytes;ggml_backend_tensor_get(output,bytes.data(),0,std::min(bytes.size(),ggml_nbytes(output)));}
@@ -183,7 +180,7 @@ void candidate_catalog::measure(ggml_backend_t target,ggml_backend_t primary,con
         auto compute=[&]{if(ggml_backend_graph_compute(target,graph)!=GGML_STATUS_SUCCESS)throw std::runtime_error("Candidate execution failed");completed(target,out);};
         std::vector<double> compute_times;
         for(int i=-warmups;i<repetitions;++i){auto start=clock::now();compute();if(i>=0)compute_times.push_back(elapsed(start));}
-        record["compute_ms"]=stats(compute_times);
+        record["compute_ms"]=sample_statistics(compute_times);
         auto actual=bytes(out);double max_abs=0,square=0;bool finite=true,within=true;
         if(actual.size()!=e.reference.size())throw std::runtime_error("Candidate reference size mismatch");
         for(size_t i=0;i<actual.size();i+=sizeof(float)){float x,y;std::memcpy(&x,actual.data()+i,sizeof(float));std::memcpy(&y,e.reference.data()+i,sizeof(float));
@@ -204,7 +201,7 @@ void candidate_catalog::measure(ggml_backend_t target,ggml_backend_t primary,con
                 // Reading/copying the full result is the RPC completion fence in the combined path.
                 ggml_backend_tensor_copy(out,dst);ggml_backend_synchronize(primary);
                 if(i>=0)(mode?roundtrip:copies).push_back(elapsed(start));}
-            record["copy_only_roundtrip_ms"]=stats(copies);record["boundary_and_compute_ms"]=stats(roundtrip);
+            record["copy_only_roundtrip_ms"]=sample_statistics(copies);record["boundary_and_compute_ms"]=sample_statistics(roundtrip);
             record["boundary_path"]="ggml_tensor_copy_primary_to_target_and_back";
         }else{record["copy_only_roundtrip_ms"]=nullptr;record["boundary_and_compute_ms"]=nullptr;}
         record["status"]="completed";record["measurement_valid"]=finite&&within;record["timing_scope"]="synchronized_host_wall_with_rpc_completion_read";
