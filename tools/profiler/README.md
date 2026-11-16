@@ -221,19 +221,8 @@ Graph IDs and the v3 output schema are preserved. SHA256 and Base64 encoding
 reuse the vendored implementations; file hashes remain streaming and image-input
 validation is unchanged. Graph/candidate timing distributions share one helper.
 
-Use existing generic tools instead of extending this profiler with synthetic
-operator/model benchmarks. The fork's deleted `test-backend-ops.cpp` is restored
-byte-for-byte from `e64a524ad12643355080d4cc668743b25e928c8f`; its public GGML API
-remains compatible. The root exposes this upstream harness as an
-`EXCLUDE_FROM_ALL` target, without enabling the incomplete full upstream test suite
-or adding a new build flag:
-
-```bash
-cmake -S . -B build-profiler -DGGML_CANN=ON -DGGML_RPC=ON -DSOC_TYPE=Ascend310P3
-cmake --build build-profiler --target test-backend-ops -j 4
-build-profiler/bin/test-backend-ops test -o ADD -b CANN0 -p 'ne=\[10,5,1,1\]'
-build-profiler/bin/test-backend-ops perf -o ADD -b CANN0 -p 'ne=\[4096,1,1,1\]'
-```
+Keep generic operator microbenchmarks outside this profiler. The deleted upstream
+operator harness is not restored or exposed as a build target.
 
 For generic text throughput, use `third_party/llama.cpp/tools/llama-bench` and
 `scripts/compare-llama-bench.py` in a standalone llama.cpp tools/common build.
