@@ -1,0 +1,12 @@
+[Unit]
+Description=UMM private-route RPC backup tunnel
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /path/to/umm.cpp/scripts/rpc/private-tunnel.py --state-dir %h/.local/state/umm-rpc-private
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
