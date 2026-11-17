@@ -297,3 +297,11 @@ python3 profiler-viewer/serve.py --profile /path/to/profile --port 8787
 
 Open `http://127.0.0.1:8787/`. Only the page and health endpoint are served; the
 profile directory is not exposed as a file server.
+
+RPC transport/cache costs depend on the endpoint and worker version. Protocol 6.2
+keeps immutable `WEIGHTS` uploads cached and sends large dynamic buffers without
+content hashing or disk caching; 6.0/6.1 workers keep the old behavior. Re-measure
+candidate boundaries after changing either the route or worker policy. Repeated
+snapshot inputs may hit the old activation cache, so their timings do not model
+all changing-input workloads. Keep endpoint, SSH route/state, worker binary and
+cache policy with the capture; do not reuse old boundary costs across these changes.

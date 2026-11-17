@@ -123,3 +123,39 @@ Keep weights, RPC caches, builds, private configuration and raw run artifacts
 outside Git. Save artifacts in the benchmark results directory. This deployment
 commit provides reproducible commands; re-running against another environment
 still requires the three-task correctness checks.
+
+## Independent private-route backup tunnel
+
+`private-tunnel.py` supervises a separate SSH process and local port (default
+50353 -> hw19 loopback 50053). It leaves 50052/50053 listeners and clients alone.
+The defaults use the verified private address 192.168.0.190 with the existing
+public host-key identity 1.95.177.112 and SSH alias hw19. Authentication and
+known_hosts stay outside the checkout; strict host checking remains enabled.
+It keeps AES-256-GCM and disables compression, agent and X11 forwarding.
+
+```sh
+python3 scripts/rpc/private-tunnel.py --state-dir "$HOME/.local/state/umm-rpc-private"
+```
+
+After each connection/reconnection it runs `true` through that exact SSH master,
+then verifies RPC HELLO and the single-device count. A private temporary control
+socket and a state-directory lock identify the owned process. `state.json`
+reports readiness, child PID, route, worker protocol and connection generation.
+SSH keepalives monitor the established channel; the tool does not periodically
+probe an in-use serial worker. A busy worker can delay startup readiness. A valid
+HELLO does not attest hardware, weights or inference correctness.
+
+Use a dedicated terminal or install the supplied user-service example after
+replacing `/path/to/umm.cpp`. The Python supervisor reconnects failed SSH children;
+the user service can restart a failed supervisor. Stop the supervisor with SIGTERM
+or stop its user service: it terminates only its SSH child. Do not kill a PID from
+an old state file without verifying its process identity. No service is installed
+or enabled automatically by these scripts.
+
+Validate large candidate boundaries and full requests separately before choosing
+this endpoint in a client. Private-route FFN transfer improvements do not imply
+that a fixed small-boundary full-model plan becomes faster. The 6.1 worker on
+50053 retains its old cache policy even when reached through the new route;
+6.2 dynamic-upload optimization requires a matching new worker. Preserve endpoint,
+SSH connection state, worker binary and cache policy with new profiler costs.
+Run `python3 scripts/rpc/test_private_tunnel.py` for protocol/SSH command checks.

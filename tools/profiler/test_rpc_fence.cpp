@@ -56,6 +56,43 @@ void check_multi_split(ggml_backend_t remote){
     if(records[0].reused || !records[1].reused || !records[2].reused)throw std::runtime_error("GRAPH/RECOMPUTE coverage mismatch");
     ggml_backend_sched_free(sched);ggml_free(ctx);ggml_backend_free(cpu);
 }
+void check_large_uploads(ggml_backend_t backend){
+    const int64_t n=10*1024*1024/sizeof(float)+1;
+    auto ctx=ggml_init({1024*1024,nullptr,true});
+    auto weights_ctx=ggml_init({1024*1024,nullptr,true});
+    if(!ctx || !weights_ctx)throw std::runtime_error("Upload context allocation failed");
+    auto base=ggml_new_tensor_1d(ctx,GGML_TYPE_F32,n+16);
+    auto input=ggml_view_1d(ctx,base,n,16*sizeof(float));
+    auto weights=ggml_new_tensor_1d(weights_ctx,GGML_TYPE_F32,n);
+    auto out=ggml_add(ctx,input,weights);
+    auto graph=ggml_new_graph_custom(ctx,32,false);ggml_build_forward_expand(graph,out);
+    auto buffer=ggml_backend_alloc_ctx_tensors(ctx,backend);
+    auto weights_buffer=ggml_backend_alloc_ctx_tensors(weights_ctx,backend);
+    if(!buffer || !weights_buffer)throw std::runtime_error("Upload buffer allocation failed");
+    ggml_backend_buffer_set_usage(buffer,GGML_BACKEND_BUFFER_USAGE_COMPUTE);
+    ggml_backend_buffer_set_usage(weights_buffer,GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+    std::vector<float> data(n),reference(n,1.0f),actual(n);
+    for(int replay=0;replay<3;++replay){
+        const float value=1.25f+replay;std::fill(data.begin(),data.end(),value);
+        if(replay%2){
+            ggml_backend_tensor_set_async(backend,weights,reference.data(),0,ggml_nbytes(weights));
+            ggml_backend_tensor_set_async(backend,input,data.data(),0,ggml_nbytes(input));
+        }else{
+            ggml_backend_tensor_set(weights,reference.data(),0,ggml_nbytes(weights));
+            ggml_backend_tensor_set(input,data.data(),0,ggml_nbytes(input));
+        }
+        for(int patch=0;patch<2;++patch){
+            if(patch){const float changed=value+1;ggml_backend_tensor_set(input,&changed,3*sizeof(float),sizeof(float));}
+            if(ggml_backend_graph_compute(backend,graph)!=GGML_STATUS_SUCCESS)throw std::runtime_error("Upload graph execution failed");
+            ggml_backend_tensor_get(out,actual.data(),0,ggml_nbytes(out));
+            for(int64_t i=0;i<n;++i)if(actual[i]!=value+1+(patch && i==3 ? 1 : 0))
+                throw std::runtime_error("Large/view/partial upload or cached recompute mismatch");
+        }
+    }
+    ggml_backend_buffer_free(weights_buffer);ggml_backend_buffer_free(buffer);
+    ggml_free(weights_ctx);ggml_free(ctx);
+}
+
 }
 int main(int argc,char ** argv){
     if(argc!=2 && argc!=3)throw std::invalid_argument("Usage: umm-profiler-rpc-fence-test ENDPOINT [legacy]");
@@ -93,6 +130,7 @@ int main(int argc,char ** argv){
     if(ggml_backend_rpc_profile_end(backend,3,batch.data(),1,&count))throw std::runtime_error("Overflow silently accepted");
     if(!ggml_backend_rpc_profile_begin(backend,4,batch.size()) || !ggml_backend_rpc_profile_end(backend,4,batch.data(),batch.size(),&count) || count!=0)throw std::runtime_error("Empty window/reuse failed");
     check_multi_split(backend);
-    std::puts(nlohmann::json({{"status","passed"},{"records",records},{"batch","ordered worker records, completion, nesting, mismatch, overflow, empty window and reuse"},{"multi_split","CPU/RPC/CPU: three replays, exact host output at scheduler END"}}).dump(2).c_str());
+    check_large_uploads(backend);
+    std::puts(nlohmann::json({{"status","passed"},{"large_uploads","sync/async, weight reuse, changed compute views, partial writes and graph recompute"},{"records",records},{"batch","ordered worker records, completion, nesting, mismatch, overflow, empty window and reuse"},{"multi_split","CPU/RPC/CPU: three replays, exact host output at scheduler END"}}).dump(2).c_str());
     ggml_backend_buffer_free(buffer);ggml_free(ctx);ggml_backend_free(backend);
 }
