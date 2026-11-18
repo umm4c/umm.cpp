@@ -42,13 +42,12 @@ Image paths resolve against the workload directory; image and cases hashes are
 checked when provided. Input order and image groups are preserved. Malformed
 or failed requests abort the profile rather than producing mock success.
 
-Devices run sequentially, with local devices first for canonical input capture.
-Each receives six full-workload passes: structure, capture, observer-off baseline,
-lightweight timing, observer-off baseline, lightweight timing. Each replay uses the same cases, order and seeds;
-requests reset model context through the regular workflow. Reuse one session
-per device; record initialization separately. This is not a cold file-cache test
-(model hashes are read before loading), nor proof that every allocation is warm.
-Use a small representative workload rather than a full quality benchmark.
+Devices run sequentially. The structure pass and two baseline/timing pairs run
+first. Separate `layer` and `block` passes collect understanding graph timings.
+Add `--operators` after the output path to collect an independent operator pass.
+Replays use the same cases, order and seeds and reset model context through the regular workflow.
+One session per device keeps its weights loaded across all passes. Use a small
+representative workload for calibration.
 
 Runtime defaults are resolved internally and saved in the manifest:
 
@@ -87,6 +86,8 @@ written after success; file-system failures can leave a partial new directory.
 | `graphs.jsonl` | Actual graph structure, tensor shapes/strides/types, view/root relationships, op parameters, dependencies and scheduler splits |
 | `trace.jsonl` | Each executed scheduler/backend graph, case/device/replay association, phase, submitted token/KV metadata and host interval |
 | `costs.jsonl` | Post-warmup statistics per exact graph fingerprint and device; sample count, mean/p50/p95/min/max |
+| `timings.jsonl` | Steady-state backend timings grouped by logical graph, case, submitted tokens and cached context |
+| `hierarchy.jsonl` | CANN stream durations for layers, blocks and optional operators, with physical graph references and half-open node ranges |
 | `requests.jsonl` | Actual responses, stage/token/prefill metrics, output hashes and within-device repeatability |
 | `report.md` | Measurement scope and unsupported capabilities |
 
@@ -112,58 +113,54 @@ Logical GGML layout is exported; backend-internal packed layout is unknown.
 Only explicit GGML views are identified as aliases; general cut legality remains
 unproven. Structural fingerprints are build-scoped, not a portable graph ABI.
 
-### Automatic candidate selection and isolated measurement
+### Timings associated with the graph
 
-| Artifact | Content |
-| --- | --- |
-| `candidates.jsonl` | Stable candidate identity, source graph, closed FFN pattern, eligibility/rejection reason, rank, estimated FLOPs, boundaries, weight identities and selection |
-| `snapshots.jsonl` | Canonical real F32 input/reference bytes (base64), hashes, shapes, source case/device and model/weight references |
-| `candidate-costs.jsonl` | Per-device isolated compute, copy-only roundtrip, boundary plus compute distributions, preparation cost, numerical error and unavailable reasons |
+`timings.jsonl` uses `umm-profiler-timing/v1`. Each row identifies an exact
+`logical_graph_id`, a workload case and the token/context metadata of the actual
+submission. Its `timings` entries refer to physical graphs by device and graph ID.
+Each entry covers a half-open `node_range` in that graph and records a median,
+sample count and timing scope. Entries are derived after collection from completed
+backend timing events. A graph with a different structural fingerprint gets its
+own row, even if it has the same stage name or execution order.
 
-The first pattern is four nodes: gate and up MatMul, split SwiGLU, down MatMul.
-All boundary/intermediate tensors must be contiguous F32 matrices; weights must
-be resident, named model weights. Views, nonstandard operands and consumers of
-intermediate results outside the candidate are rejected. This deliberately narrow
-pattern excludes KV/state mutation; isolated eligibility is not general production
-cut legality. Original node parameters are preserved when reconstructing it.
+`timings.jsonl` covers whole backend submissions. A measured range can
+cover a cut candidate when the range fits entirely inside the candidate and its
+device, inputs and timing scope match. A partial range has unknown time. Request
+baselines in `requests.jsonl` provide the coarser end-to-end reference. Client
+submission and inclusive scheduler intervals stay in the trace and must be
+kept separate from backend timings.
 
-Candidates rank by estimated matrix FLOPs per boundary byte (not measured benefit).
-Choose one layer per input shape, up to four first-observed shapes. The selection
-freezes after the first device structure pass. This bounded heuristic does not
-claim every layer with the same shape has equal performance. Stable candidate IDs
-contain model component hashes, weight names/types/shapes, node math and shapes;
-they exclude placement and changing KV context.
+`hierarchy.jsonl` provides finer ranges for U1.5 understanding graphs. Each
+record references the same `graphs.jsonl` and has one coverage level. Norm and
+the first residual belong to the Attention block, and the FFN block includes
+its Norm and the layer output residual. Preamble and epilogue have their own
+ranges. Fused operators share an interval. View-only nodes are grouped with
+adjacent compute. Each range is
+measured between events on the CANN stream. An interval can include idle time
+between launches. The collector reads the events after graph completion.
+With ACL graph capture active, or when a backend cannot provide the requested
+timing, the record is marked unavailable. Invalid event intervals have null
+durations. The tool follows the actual execution mode throughout the measurement.
 
-A separate untimed capture pass uses scheduler execution callbacks to read the
-candidate input after its producer and reference after the candidate. Reading at
-the end of the whole graph would be unsafe because graph allocation reuses memory.
-Canonical snapshots are shared across devices. Each device binds its own live
-model weight tensors while its session exists; no candidate weight readback,
-reconversion or repeated upload is required. Missing snapshots/bindings or backend
-operator rejection produce explicit unavailable records.
+Remote range timing requires a 6.3 worker built from the matching GGML. The
+ordinary backend timing continues to support 6.1 and 6.2 workers. A fine RPC
+pass queues its boundaries for the next graph and reads back the ranges once
+at graph completion. This adds a response per profiled graph, with no
+per-operator RPC or stream synchronization. Prefer the coarsest matching range
+when scoring a cut. Parent and child ranges and different timing scopes are
+alternative descriptions of the same work.
 
-Isolated measurements use two warmups and five repetitions. Native compute is
-measured separately from preparation and full boundary roundtrip through the
-actual GGML tensor-copy path, with the first local device as primary. Copy-only and
-combined measurements are separate experiments; do not assume additive costs.
-The local-to-local roundtrip is an artificial copy control; compare a remote
-roundtrip against native local compute for a first indication. Adjacent remote
-candidates need a full-plan model to avoid charging redundant roundtrips.
-No local primary means boundary costs are unavailable. No CPU compute fallback
-is used by the real device collector.
-
-Every candidate output is checked against the canonical reference (F32,
-`abs(error) <= .05 + .005 * abs(reference)`); max absolute error, RMSE, finiteness
-and exact equality are recorded. These are initial measurement tolerances, not
-model-quality acceptance. Weight upload time remains null: weights are already
-resident and their original loading is not separately decomposed.
+The regular profiler no longer selects or replays a fixed set of FFNs. The
+three previous candidate files are emitted empty for existing bundle readers.
+The isolated FFN fixture remains in the standalone candidate test. See
+[Profiler design](DESIGN.md) for planned finer measurements and scheduling inputs.
 
 Phase metadata covers understanding prefill/decode and native U1 vision graphs.
 Generation is a coarse phase, without individual conditioning/diffusion/VAE graph
 labels. Exact tensor shapes remain available for unclassified graphs.
 
 **Completed timing is synchronized host wall time, not device kernel time.**
-Local timing and structure/capture observation retain their existing waits.
+Local timing and structure observation retain their existing waits.
 RPC timing passes require a protocol 6.1 worker and instead open a window per
 request, record client submissions without observer-added waits, and collect
 worker records in one final response. Normal logits, activation and result reads
@@ -173,7 +170,7 @@ sending unknown commands; a 6.0 client cannot connect to a 6.1 worker.
 
 The legacy `export_before_ms` field records structure work in structure events
 and contract-check/lookup preparation in timing events. Full JSON
-export and candidate discovery occur only in the structure pass.
+export occurs only in the structure pass.
 Client events use their per-device collector clock. Synchronized client scheduler
 intervals contain backend intervals and child preparation, so must not be summed.
 RPC timing emits `event_type: submitted`, `timing_scope: client_submission_host_wall`;
@@ -188,7 +185,7 @@ full scheduler/network time. Only completed timing events enter cost statistics;
 RPC scheduler graphs therefore remain unmeasured. A percentile with few samples
 is descriptive only. Request wall time includes the final batch collection.
 
-For synchronized observation (including structure/capture), successful scheduler execution without an eval callback means child backend events
+For synchronized observation (including structure), successful scheduler execution without an eval callback means child backend events
 already fence the device streams. The scheduler retains its final synchronization
 but reuses those completion fences instead of performing another RPC read. Direct
 backend calls, scheduler entry, callback execution and failure paths retain their
@@ -201,16 +198,11 @@ GRAPH/RECOMPUTE and submission sequence. Capacity comes from the frozen case
 sequence (minimum 64, maximum 4096 records). Overflow or mismatched records fail
 the request. The collector exclusively owns the endpoint while a window is active.
 
-General cut legality, per-operator timing, pure network/DMA costs, overlap, memory
-peaks and remote worker metrics remain unavailable. Actual tensor-copy roundtrip
-cost is supplied for selected FFNs, not a general transfer model. The manifest
-records paired observer-off/timing request walls; their difference includes runtime
-variation and must not be used as a universal correction factor.
-Production placement is unchanged; isolated copies of selected subgraphs are executed. Output repeatability is checked
-within each device; it is not cross-device logits or task accuracy validation.
-`decision_usable` remains false until profiling overhead, coverage, reference
-numerics and prediction have been validated. Real measurements must not yet be
-used as a validated scheduling cost model.
+General cut legality, transfer calibration and memory peaks are
+still needed for a validated scheduling model. The manifest records paired
+observer-off/timing request walls. Their difference includes runtime variation.
+Output repeatability checks compare runs within each device. The bundle still
+sets `decision_usable: false`.
 
 ## Checks
 

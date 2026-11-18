@@ -1,6 +1,7 @@
 #include "profiler.h"
 #include "profile-context.h"
-#include "profiler-candidates.h"
+#include "profiler-annotations.h"
+#include "profiler-hierarchy.h"
 #include "profiler-graph-contract.h"
 #include <memory>
 #include "runtime-support.h"
@@ -61,11 +62,12 @@ struct environment {
 struct capture {
     result & output;
     std::string device_id, case_id, requested_backend, error;
-    candidate_catalog * catalog=nullptr;
     std::string pass="structure";
     int replay=0;
     bool warmup=false;
     bool remote_timing=false;
+    bool remote=false;
+    detail::hierarchy_capture hierarchy;
     clock::time_point origin=clock::now();
     struct frame {std::string graph_id,event_id,parent;clock::time_point start;double export_ms;};
     std::vector<frame> stack;
@@ -75,10 +77,42 @@ struct capture {
     size_t execution_cursor=0;
     size_t event_number=0;
     std::map<std::string,std::vector<double>> samples;
+    bool fine() const {
+        return pass == "layer" || pass == "block" || pass == "operator";
+    }
+    bool observe_fine(ggml_backend_t backend, ggml_backend_sched_t sched, ggml_cgraph * graph, bool completed) {
+        if (!completed) {
+            const auto & binding = bindings.at(case_id).at(execution_cursor++);
+            if (binding.phase != current_phase.phase) {
+                throw std::runtime_error("Execution phase differs from frozen structure");
+            }
+            binding.contract->check(backend, sched, graph);
+            if (backend && (binding.phase == "understanding_prefill" || binding.phase == "understanding_decode")) {
+                hierarchy.begin(backend, graph, binding.id, pass);
+                stack.push_back({binding.id, {}, {}, clock::now(), 0});
+            }
+        } else if (backend && !stack.empty()) {
+            auto sample = hierarchy.finish(backend);
+            if (sample.is_null()) {
+                throw std::runtime_error("Unmatched fine timing graph");
+            }
+            const auto tokens = current_phase.tokens;
+            const auto cached = current_phase.cached_tokens;
+            sample.update({
+                {"schema_version", "umm-profiler-hierarchy/v1"}, {"graph_id", stack.back().graph_id},
+                {"device_id", device_id}, {"case_id", case_id}, {"replay", replay}, {"level", pass},
+                {"submission", {{"tokens", tokens < 0 ? json(nullptr) : json(tokens)},
+                                {"cached_tokens", cached < 0 ? json(nullptr) : json(cached)}}},
+            });
+            output.hierarchy.push_back(std::move(sample));
+            stack.pop_back();
+        }
+        return true;
+    }
     bool observe(ggml_backend_t backend,ggml_backend_sched_t sched,ggml_cgraph * graph,bool completed,ggml_status status) {
-        if(pass=="capture") {
-            if(sched){if(!completed)catalog->begin_capture(sched,graph,case_id);else catalog->end_capture(sched);}
-            return true;
+        if (fine()) {
+            if (status != GGML_STATUS_SUCCESS) throw std::runtime_error("Fine timing graph execution failed");
+            return observe_fine(backend, sched, graph, completed);
         }
         if(!completed) {
             auto start=clock::now();std::string fingerprint;
@@ -87,7 +121,6 @@ struct capture {
                 const auto & descriptor=contract->description();
                 fingerprint=descriptor.signature(current_phase.phase,requested_backend,true);
                 if(seen.insert(fingerprint).second){auto description=descriptor.describe(current_phase.phase,current_phase.tokens,current_phase.cached_tokens,requested_backend);description["graph_id"]=fingerprint;description["logical_graph_id"]=descriptor.signature(current_phase.phase,requested_backend,false);description["device_id"]=device_id;output.graphs.push_back(std::move(description));}
-                if(sched)catalog->discover(graph,fingerprint);
                 bindings[case_id].push_back({fingerprint,current_phase.phase,std::move(contract),sched!=nullptr});
             }else{
                 auto & sequence=bindings.at(case_id);
@@ -123,12 +156,17 @@ struct capture {
     }
 };
 struct observer_scope {
+    capture & collector;
     bool submission;
-    explicit observer_scope(capture & c):submission(c.remote_timing){
+    explicit observer_scope(capture & c):collector(c),submission(c.remote_timing || (c.remote && c.fine())){
         if(submission)ggml_backend_set_graph_submission_observer(capture::callback,&c);
         else ggml_backend_set_graph_observer(capture::callback,&c);
     }
-    ~observer_scope(){if(submission)ggml_backend_set_graph_submission_observer(nullptr,nullptr);else ggml_backend_set_graph_observer(nullptr,nullptr);}
+    ~observer_scope(){
+        if(submission)ggml_backend_set_graph_submission_observer(nullptr,nullptr);
+        else ggml_backend_set_graph_observer(nullptr,nullptr);
+        collector.hierarchy.cancel();
+    }
 };
 
 // One window per request; its final response fences the ordered worker stream.
@@ -194,7 +232,7 @@ public:
     }
 };
 }
-result profile(const request & input) {
+result profile(const request & input, bool operator_timing) {
     // Backend configuration and SD callbacks are process-global. Profiling owns this process.
     static std::mutex mutex;
     std::lock_guard<std::mutex> lock(mutex);
@@ -239,13 +277,12 @@ result profile(const request & input) {
     // The current 310P NZ implementation latches its environment on first use.
     // Keep one setting for all local CANN workers in this process; RPC worker settings remain remote.
     environment env;env.set("GGML_CANN_Q8_NZ","1");env.set("GGML_CANN_SATURATION","1");env.set("GGML_SCHED_STRICT_ACCEL","1");
-    candidate_catalog catalog(hash(components.dump()));
     auto devices=input.devices;std::stable_partition(devices.begin(),devices.end(),[](const auto & d){return d.transport=="local";});
-    struct backend_owner{ggml_backend_t ptr=nullptr;~backend_owner(){if(ptr)ggml_backend_free(ptr);}} primary;
-    std::string primary_id;
     json overhead=json::array();
+    std::vector<std::string> passes = {"structure", "baseline", "timing", "baseline", "timing", "layer", "block"};
+    if (operator_timing) passes.push_back("operator");
     for(const auto & d:devices) {
-        capture c{out};c.device_id=d.id;c.catalog=&catalog;catalog.start_device(d.id);
+        capture c{out};c.device_id=d.id;c.remote=d.transport=="rpc";
         env.set("GGML_CANN_Q8_NZ",d.transport=="local"?"1":"0");
         std::string backend=d.backend;
         if(d.transport=="rpc") {
@@ -259,7 +296,6 @@ result profile(const request & input) {
         env.set("GGML_REQUIRED_DEVICE",backend);c.requested_backend=backend;
         std::unique_ptr<rpc_batch> batch;
         if(d.transport=="rpc")batch=std::make_unique<rpc_batch>(backend);
-        if(!primary.ptr && d.transport=="local"){primary.ptr=ggml_backend_init_by_name(backend.c_str(),nullptr);if(!primary.ptr)throw std::runtime_error("Cannot initialize primary backend");primary_id=d.id;}
         runtime::options options={{"--model",model.string()},{"--understanding-backend",backend},{"--generation-backend",backend},
             {"--vision-backend",backend},{"--generation-max-vram",backend+"=40"},{"--steps",fast_lora?"8":"50"},{"--cfg",fast_lora?"1":"4"},{"--shift","3"},
             {"--n-ctx",generation_only?"2048":max_images>4?"32768":"8192"},
@@ -274,7 +310,6 @@ result profile(const request & input) {
             {"startup_ms",startup},{"remote_configuration_verified",false}});
         std::map<std::string,std::string> expected;
         std::map<std::string,std::vector<double>> baseline_ms,timed_ms;
-        const std::array<std::string,6> passes={"structure","capture","baseline","timing","baseline","timing"};
         for(size_t replay=0;replay<passes.size();++replay) {
             c.replay=int(replay);c.pass=passes[replay];c.warmup=c.pass!="timing";
             std::cerr<<"profiler: device="<<d.id<<" pass="<<c.pass<<" replay="<<replay<<std::endl;
@@ -289,7 +324,7 @@ result profile(const request & input) {
                 else {observer_scope observation(c);response=runtime::run_case(engine,item,options,true);}
                 if(c.remote_timing)batch->finish(c,trace_start);
                 const double wall=elapsed(request_start);
-                if(c.pass=="timing" && c.error.empty() && c.execution_cursor!=c.bindings.at(c.case_id).size())throw std::runtime_error("Execution has fewer graphs than frozen structure");
+                if((c.pass=="timing" || c.fine()) && c.error.empty() && c.execution_cursor!=c.bindings.at(c.case_id).size())throw std::runtime_error("Execution has fewer graphs than frozen structure");
                 if(!c.error.empty())throw std::runtime_error(c.error);
                 if(response.value("status","")!="ok")throw std::runtime_error("Profile request failed: "+response.dump());
                 if(!c.stack.empty())throw std::runtime_error("Unclosed graph observation");
@@ -301,12 +336,7 @@ result profile(const request & input) {
                 out.requests.push_back({{"device_id",d.id},{"case_id",c.case_id},{"replay",replay},{"pass",c.pass},{"warmup",c.warmup},{"wall_ms",wall},
                     {"output_sha256",digest},{"matches_warmup",digest==expected.at(c.case_id)},{"response",response}});
             }
-            if(c.pass=="structure")catalog.select();
         }
-        backend_owner target;target.ptr=ggml_backend_init_by_name(backend.c_str(),nullptr);
-        if(!target.ptr)throw std::runtime_error("Cannot initialize measurement backend");
-        std::cerr<<"profiler: measuring selected candidates on "<<d.id<<std::endl;
-        catalog.measure(target.ptr,primary.ptr,primary_id);
         for(const auto & item:baseline_ms){json pairs=json::array();for(size_t i=0;i<item.second.size();++i)pairs.push_back({{"baseline_ms",item.second[i]},{"timing_ms",timed_ms.at(item.first).at(i)},{"observed_delta_ms",timed_ms.at(item.first).at(i)-item.second[i]}});
             overhead.push_back({{"device_id",d.id},{"case_id",item.first},{"paired_replays",pairs},{"interpretation","includes_runtime_variation_and_observation_overhead_not_a_correction_factor"}});}
         for(auto & entry:c.samples) {
@@ -319,23 +349,32 @@ result profile(const request & input) {
                 {"memory_peak_bytes",nullptr},{"transfer",nullptr},{"overlap",nullptr},{"kernel_ms",nullptr}});
         }
     }
-    out.candidates=catalog.records();out.candidate_costs=catalog.measurements();out.snapshots=catalog.snapshots();
+    out.timings = detail::annotate_timings(out.graphs, out.trace);
+    // The legacy bundle files remain readable by existing viewers.
+    out.candidates = json::array();
+    out.candidate_costs = json::array();
+    out.snapshots = json::array();
     out.manifest={{"schema_version","umm-profiler/v3"},{"data_origin","measured"},{"status","completed"},{"executed",true},
         {"decision_usable",false},{"request",request_json},{"identity",{{"model_manifest_sha256",hash(model_manifest)},{"model_components_sha256",components},{"profiler_binary_sha256",std::filesystem::exists("/proc/self/exe")?json(file_hash("/proc/self/exe")):json(nullptr)},{"devices",identities}}},
         {"workload",{{"case_count",cases.size()},{"cases_sha256",hash(raw_cases)},{"manifest",workload_manifest},{"cases",original_cases}}},
-        {"measurement",{{"passes",{"structure","capture","baseline","timing","baseline","timing"}},{"measured_replays",2},{"observation_overhead",overhead},{"candidate_measurement","two_warmups_five_repetitions_native_weights_real_snapshot"},{"serial_devices",true},{"graph_synchronization",true},{"rpc_completion_fence","bounded_tensor_read_up_to_4096_bytes"},{"rpc_scheduler_completion","reuse_successful_child_fences_without_eval_callback"},{"rpc_timing","worker_batch_per_request"},{"rpc_profile_protocol","6.1"},{"rpc_submission_scope","client_submission_host_wall"},
-            {"timing_scope","synchronized_host_wall"},{"nested_events_are_not_additive",true},{"capture_overhead_in_parent_events",true},{"full_json_export_in_timing_pass",false},{"structural_hash_in_timing_pass",false},{"identity_resolution","frozen_case_execution_contract"},{"contract_validation","all_tensor_metadata_topology_and_devices_without_hash"}}},
-        {"coverage",{{"workload_loaded",true},{"device_probed",true},{"cut_legality",false},{"isolated_ffn_replay",true},{"selected_boundary_roundtrip",true},{"operator_timing",false},
+        {"measurement",{{"passes",passes},{"measured_replays",2},{"observation_overhead",overhead},{"serial_devices",true},{"graph_synchronization",true},{"rpc_scheduler_completion","reuse_successful_child_fences_without_eval_callback"},{"rpc_timing","worker_batch_per_request"},{"rpc_profile_protocol","6.1"},{"rpc_submission_scope","client_submission_host_wall"},
+            {"timing_scope","synchronized_host_wall"},{"nested_events_are_not_additive",true},{"full_json_export_in_timing_pass",false},{"structural_hash_in_timing_pass",false},{"identity_resolution","frozen_case_execution_contract"},{"contract_validation","all_tensor_metadata_topology_and_devices_without_hash"}}},
+        {"coverage",{{"workload_loaded",true},{"device_probed",true},{"cut_legality",false},{"isolated_ffn_replay",false},{"selected_boundary_roundtrip",false},{"operator_timing",std::any_of(out.hierarchy.begin(),out.hierarchy.end(),[](const auto & item){
+                return item.at("level")=="operator" && item.contains("spans") &&
+                    std::any_of(item.at("spans").begin(), item.at("spans").end(), [](const auto & span) {
+                        return !span.at("elapsed_ms").is_null();
+                    });})},{"logical_graph_timing_annotations",true},
             {"remote_worker_metrics",std::any_of(devices.begin(),devices.end(),[](const auto & d){return d.transport=="rpc";})},{"phase_coverage","understanding prefill/decode, U1 vision, coarse generation"},
             {"correctness",stable?"within_device_output_repeatable":"within_device_output_changed"}}},
-        {"artifacts",{"graphs.jsonl","trace.jsonl","costs.jsonl","requests.jsonl","candidates.jsonl","candidate-costs.jsonl","snapshots.jsonl","report.md"}}};
-    out.report="# Structure-led candidate profiler\n\n"
-        "Real model execution with six passes per device: structure, snapshot capture, baseline, lightweight timing, baseline, lightweight timing. Devices run serially; local devices run first to supply canonical real activations. The request interface remains model, devices and representative workload.\n\n"
-        "Candidate extraction currently recognizes closed, contiguous F32-boundary SwiGLU FFNs with three resident model weights. It rejects views and external consumers of intermediate values. It ranks by estimated matrix FLOPs per boundary byte, selecting one layer per input shape, at most four shapes in first-observed order. This is a structural heuristic, not a profitability proof.\n\n"
-        "Selected inputs and reference outputs are captured at scheduler execution boundaries in a separate untimed pass. All devices replay the same canonical inputs with their native resident model weights. Snapshots reference the model hashes and weight identities; weights are not re-uploaded for each measurement. Candidate execution uses two warmups and five timed repetitions.\n\n"
-        "Candidate costs include compute, copy-only boundary roundtrip, and boundary plus compute where a local primary is available. Boundary copies use the actual GGML tensor-copy path. The local copy roundtrip is an artificial control; native execution uses the compute-only baseline. Full F32 output error is checked against the captured reference (atol=.05, rtol=.005); this is not end-to-end model quality acceptance.\n\n"
-        "Local and structure/capture timings use synchronized host wall intervals with RPC completion-read fences where applicable. RPC timing passes instead collect client submission events without added waits, then fetch worker execution records once per request using protocol 6.1. Only completed worker records enter remote graph costs; worker timestamps are in separate per-window clock domains. These are synchronized worker host intervals, not kernel time. Full JSON export is excluded from timing passes; frozen-contract checks and batch collection still perturb execution. Structure hashing runs only in the structure pass; timed requests use registered graph IDs and verify immutable metadata/topology/device contracts without hashing or serialization. Paired observer-off baselines quantify the observed change, including runtime variation. Nested scheduler/backend intervals overlap and must not be summed.\n\n"
-        "Decision usability remains false: isolated replay eligibility does not establish production cut legality, plan correctness, unseen-shape coverage, memory capacity, or end-to-end scheduling benefit. No production scheduling policy changes are made.\n";
+        {"artifacts",{"graphs.jsonl","trace.jsonl","costs.jsonl","requests.jsonl","candidates.jsonl","candidate-costs.jsonl","snapshots.jsonl","timings.jsonl","hierarchy.jsonl","report.md"}}};
+    out.report = "# Graph profiler\n\n"
+        "Runs the structure and paired baseline/timing passes before separate layer, block and optional operator passes. "
+        "Baseline requests use the normal inference path with observation off.\n\n"
+        "timings.jsonl groups completed backend graph timings by exact logical graph, case and submitted token/context sizes. "
+        "Physical graph references retain the actual placement. Local synchronized host intervals and completed RPC worker intervals retain their timing scopes. "
+        "Client submission and overlapping scheduler times remain in trace.jsonl and are excluded from timing annotations.\n\n"
+        "hierarchy.jsonl contains CANN stream timings for understanding graphs. A cut crossing a measured range has unknown cost at that level. "
+        "Boundary transfer, persistent state and peak memory costs are not inferred.\n";
     return out;
 }
 }

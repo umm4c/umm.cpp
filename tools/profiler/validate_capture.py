@@ -5,6 +5,7 @@ import hashlib
 import math
 import re
 import json
+from statistics import median
 from pathlib import Path
 import sys
 
@@ -76,7 +77,8 @@ def validate(root):
         assert cost["sample_count"] == sample_counts[cost["device_id"], cost["graph_id"]]
         assert cost["measurement_valid"] and not cost["decision_usable"]
         assert cost["duration_ms"]["min"] <= cost["duration_ms"]["p50"] <= cost["duration_ms"]["p95"] <= cost["duration_ms"]["max"]
-    expected = {(d["id"], c["case_id"], i) for d in manifest["request"]["devices"] for c in manifest["workload"]["cases"] for i in range(6)}
+    passes = manifest["measurement"]["passes"]
+    expected = {(d["id"], c["case_id"], i) for d in manifest["request"]["devices"] for c in manifest["workload"]["cases"] for i in range(len(passes))}
     assert {(x["device_id"], x["case_id"], x["replay"]) for x in requests} == expected
     assert len(requests) == len(expected)
     assert all(x["response"]["status"] == "ok" for x in requests)
@@ -116,8 +118,83 @@ def validate(root):
             assert cost["compute_ms"]["sample_count"] == 5
             assert cost["measurement_valid"] == (cost["accuracy"]["all_finite"] and cost["accuracy"]["within_tolerance"])
     for req in requests:
-        assert req["pass"] == manifest["measurement"]["passes"][req["replay"]]
-    return {"status": "passed", "candidates": len(candidates), "selected": sum(c["selected"] for c in candidates), "snapshots": len(snapshots), "candidate_costs": len(candidate_costs), "graphs": len(graphs), "events": len(events), "cost_records": len(costs), "requests": len(requests), "repeatable": all(x["matches_warmup"] for x in requests)}
+        assert req["pass"] == passes[req["replay"]]
+
+    annotations = []
+    if "timings.jsonl" in manifest["artifacts"]:
+        annotations = rows("timings.jsonl")
+        expected_samples = {}
+        for event in events:
+            if (event["pass"], event["event_type"], event["kind"]) != ("timing", "completed", "backend") or event["warmup"]:
+                continue
+            graph = by_graph[event["device_id"], event["graph_id"]]
+            shape = event["submission"]
+            key = (graph["logical_graph_id"], event["case_id"], shape["tokens"], shape["cached_tokens"],
+                   event["device_id"], event["graph_id"], event["timing_scope"])
+            expected_samples.setdefault(key, []).append(event["duration_ms"])
+
+        seen_inputs = set()
+        for row in annotations:
+            assert row["schema_version"] == "umm-profiler-timing/v1"
+            shape = row["submission"]
+            key = (row["logical_graph_id"], row["case_id"], shape["tokens"], shape["cached_tokens"])
+            assert key not in seen_inputs and row["timings"]
+            seen_inputs.add(key)
+            for timing in row["timings"]:
+                graph = by_graph[timing["device_id"], timing["graph_id"]]
+                assert graph["kind"] == "backend" and graph["logical_graph_id"] == row["logical_graph_id"]
+                assert timing["node_range"] == [0, len(graph["nodes"])]
+                source = (timing["device_id"], timing["graph_id"], timing["timing_scope"])
+                samples = expected_samples.pop(key + source)
+                assert timing["sample_count"] == len(samples)
+                assert math.isclose(timing["median_ms"], median(samples))
+        assert not expected_samples, "Completed backend timings missing from annotations"
+
+    hierarchy_counts = Counter()
+    if "hierarchy.jsonl" in manifest["artifacts"]:
+        def hierarchy_key(row):
+            submission = row["submission"]
+            shape = tuple(None if value is None or value < 0 else value
+                          for value in (submission["tokens"], submission["cached_tokens"]))
+            return row["device_id"], row["case_id"], row["graph_id"], shape
+
+        fine_replays = [i for i, name in enumerate(passes) if name in ("layer", "block", "operator")]
+        expected_hierarchy = Counter(
+            (replay, hierarchy_key(event))
+            for event in events
+            if event["pass"] == "structure" and event["kind"] == "backend"
+            and event["phase"] in ("understanding_prefill", "understanding_decode")
+            for replay in fine_replays
+        )
+        recorded_hierarchy = Counter()
+        for row in rows("hierarchy.jsonl"):
+            assert row["schema_version"] == "umm-profiler-hierarchy/v1"
+            graph = by_graph[row["device_id"], row["graph_id"]]
+            assert graph["kind"] == "backend" and graph["phase"] in ("understanding_prefill", "understanding_decode")
+            assert row["level"] in ("layer", "block", "operator") and row["level"] == passes[row["replay"]]
+            assert (row["device_id"], row["case_id"], row["replay"]) in request_map
+            recorded_hierarchy[row["replay"], hierarchy_key(row)] += 1
+            hierarchy_counts["/".join((row["device_id"], row["level"], row["status"]))] += 1
+            if row["status"] == "unavailable":
+                assert row["reason"] and "spans" not in row
+                continue
+            assert row["status"] in ("completed", "partial") and row["timing_scope"] == "cann_stream_events"
+            end = 0
+            missing = 0
+            for span in row["spans"]:
+                begin, next_end = span["node_range"]
+                assert begin == end and begin < next_end and span["labels"]
+                if span["elapsed_ms"] is None:
+                    assert span["reason"] == "invalid_stream_elapsed_time"
+                    missing += 1
+                else:
+                    assert math.isfinite(span["elapsed_ms"]) and span["elapsed_ms"] >= 0
+                end = next_end
+            assert end == len(graph["nodes"]), "Fine timings must cover the submitted node sequence once"
+            assert bool(missing) == (row["status"] == "partial")
+        assert recorded_hierarchy == expected_hierarchy, "Fine timing records differ from the frozen execution sequence"
+
+    return {"status": "passed", "candidates": len(candidates), "selected": sum(c["selected"] for c in candidates), "snapshots": len(snapshots), "candidate_costs": len(candidate_costs), "graphs": len(graphs), "events": len(events), "cost_records": len(costs), "timing_annotations": len(annotations), "hierarchy": dict(hierarchy_counts), "requests": len(requests), "repeatable": all(x["matches_warmup"] for x in requests)}
 
 
 if __name__ == "__main__":

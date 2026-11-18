@@ -3,7 +3,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     message(FATAL_ERROR "Configure the UMM root to build the real profiler")
 endif()
 get_filename_component(UMM_PROFILER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
-add_library(umm-profiler-api "${UMM_PROFILER_ROOT}/src/profiler.cpp" "${UMM_PROFILER_ROOT}/src/profiler-run.cpp" "${UMM_PROFILER_ROOT}/src/profiler-candidates.cpp")
+add_library(umm-profiler-api
+    "${UMM_PROFILER_ROOT}/src/profiler.cpp"
+    "${UMM_PROFILER_ROOT}/src/profiler-run.cpp"
+    "${UMM_PROFILER_ROOT}/src/profiler-annotations.cpp"
+    "${UMM_PROFILER_ROOT}/src/profiler-hierarchy.cpp")
 target_compile_features(umm-profiler-api PUBLIC cxx_std_17)
 target_include_directories(umm-profiler-api PUBLIC
     "${UMM_PROFILER_ROOT}/include"

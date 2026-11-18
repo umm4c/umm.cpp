@@ -24,14 +24,16 @@ struct result {
     nlohmann::json trace;
     nlohmann::json costs;
     nlohmann::json requests;
+    nlohmann::json timings = nlohmann::json::array();
+    nlohmann::json hierarchy = nlohmann::json::array();
     nlohmann::json candidates, candidate_costs, snapshots;
     std::string report;
 };
 
 // Parse the v1 request fields; unknown fields are rejected.
 request parse_request(const nlohmann::json & value);
-// Runs structure, capture, and paired baseline/timing replays in a dedicated process.
-result profile(const request & input);
+// Runs structure and paired baseline/timing replays in a dedicated process.
+result profile(const request & input, bool operator_timing = false);
 // Writes the manifest, graph/event/cost/request and candidate/snapshot artifacts and report.
 // The output directory must not already exist.
 void write_result(const result & output, const std::string & directory);
