@@ -24,7 +24,8 @@ using option_map = std::map<std::string, std::string>;
 void print_help() {
     std::cout
         << "umm-cli --model PACKAGE --mode MODE --prompt TEXT\n"
-           "        [--execution-policy local_310p|remote_910b] [--rpc-endpoint HOST:PORT] [--local-device CANN0]\n"
+           "        [--execution-policy local_310p|remote_910b|random] [--rpc-endpoint HOST:PORT] [--local-device CANN0]\n"
+           "        [--policy-seed 0] [--policy-cuts 1] (random: split understanding, run vision and diffusion locally)\n"
            "        MODE: text|image|think-image|interleave|think-interleave|understand|think-understand|edit|think-edit\n"
            "        [--input image.png] [--output image.png] [--max-tokens 256] [--max-images 2]\n"
            "        [--understanding-backend CANN0] [--vision-backend CANN0]\n"
@@ -51,7 +52,7 @@ option_map parse_arguments(int argc, char ** argv) {
     }
 
     const std::vector<std::string> known = {
-        "--execution-policy", "--rpc-endpoint", "--local-device",
+        "--execution-policy", "--rpc-endpoint", "--local-device", "--policy-seed", "--policy-cuts",
         "--model", "--mode", "--prompt", "--input", "--output", "--max-tokens", "--max-images",
         "--width", "--height", "--steps", "--cfg", "--image-cfg", "--shift", "--seed",
         "--vae-tiling", "--vae-tile-size", "--vae-tile-overlap",
@@ -119,7 +120,7 @@ int run(int argc, char ** argv) {
         return 0;
     }
 
-    args = umm::configure_execution_policy(std::move(args));
+    const auto schedule = umm::configure_execution_policy(args);
     const auto & model = required(args, "--model");
     const auto & prompt = required(args, "--prompt");
     if (!std::filesystem::is_directory(model)) {
@@ -145,7 +146,7 @@ int run(int argc, char ** argv) {
                          value(args, "--vision-backend"),
                          std::stoi(value(args, "--n-ctx", "0")),
                          std::stoi(value(args, "--n-batch", "0")),
-                         std::stoi(value(args, "--n-ubatch", "0")));
+                         std::stoi(value(args, "--n-ubatch", "0")), schedule);
     if (mode == "text") {
         std::cout << session.text(prompt, std::stoi(value(args, "--max-tokens", "256"))) << '\n';
         return 0;

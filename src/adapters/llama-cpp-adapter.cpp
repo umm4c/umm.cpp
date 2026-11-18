@@ -170,9 +170,32 @@ ggml_backend_sched_t llama_cpp_adapter::scheduler() const {
     return context_->get_sched();
 }
 
+void llama_cpp_adapter::set_placement(graph_placement placement) {
+    placement_ = std::move(placement);
+    if (!placement_) {
+        ggml_backend_sched_set_placement_callback(scheduler(), nullptr, nullptr);
+        return;
+    }
+    ggml_backend_sched_set_placement_callback(scheduler(), [](ggml_backend_sched_t sched,
+            ggml_cgraph * graph, bool allocated, void * user) {
+        auto & adapter = *static_cast<llama_cpp_adapter *>(user);
+        try {
+            adapter.placement_(sched, graph, allocated);
+            return true;
+        } catch (...) {
+            adapter.placement_error_ = std::current_exception();
+            return false;
+        }
+    }, this);
+}
+
 int llama_cpp_adapter::decode_profiled(llama_batch batch, const char * phase) {
     profiling::phase_scope scope(std::string(profiling::current_phase.phase) == "understanding_decode" ? "understanding_decode" : phase, batch.n_tokens, tokens_.size());
-    return llama_decode(context_.get(), batch);
+    const int status = llama_decode(context_.get(), batch);
+    if (placement_error_) {
+        std::rethrow_exception(std::exchange(placement_error_, {}));
+    }
+    return status;
 }
 
 void llama_cpp_adapter::synchronize() {

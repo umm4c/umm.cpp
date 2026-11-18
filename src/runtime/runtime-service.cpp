@@ -106,7 +106,10 @@ struct service::impl {
     std::ofstream log;
     uint64_t sequence = 0;
 
-    explicit impl(options input) : args(std::move(input)), monitor(args) {
+    understanding_schedule schedule;
+
+    impl(options input, understanding_schedule placement)
+        : args(std::move(input)), monitor(args), schedule(std::move(placement)) {
         const char * log_env = std::getenv("UMM_REQUEST_LOG");
         const auto path = option(args, "--request-log", log_env ? log_env : "");
         if (!path.empty()) { log.open(path, std::ios::app); if (!log) throw std::invalid_argument("Cannot open request log"); }
@@ -160,10 +163,10 @@ struct service::impl {
             session engine(model, "", option(args, "--understanding-backend"), option(args, "--generation-backend"),
                 option(args, "--generation-max-vram"), option(args, "--vision-backend"),
                 std::stoi(option(args, "--n-ctx", "0")), std::stoi(option(args, "--n-batch", "0")),
-                std::stoi(option(args, "--n-ubatch", "0")));
+                std::stoi(option(args, "--n-ubatch", "0")), schedule);
             ready = {{"type", "ready"}, {"protocol", "umm-session/v1"},
                      {"cold_start_ms", std::chrono::duration<double, std::milli>(clock::now()-start).count()},
-                     {"model", model}, {"options", args}, {"runtime_identity", runtime_identity(model, args)},
+                     {"model", model}, {"options", args}, {"runtime_identity", runtime_identity(model, args, schedule.secondary_backend)},
                      {"monitoring", monitor.snapshot()}, {"startup_transfer", transfer_snapshot()}};
             ready["model_manifest_sha256"] = file_hash((std::filesystem::path(model) / "model.json").string());
             if (const char * hash = std::getenv("UMM_MODEL_MANIFEST_SHA256")) {
@@ -205,7 +208,7 @@ struct service::impl {
 };
 
 service::service(options args) {
-    args = umm::configure_execution_policy(std::move(args));
+    auto schedule = umm::configure_execution_policy(args);
     if (args.count("--cann-q8-nz")) {
         const auto & enabled = args.at("--cann-q8-nz");
         if (enabled != "0" && enabled != "1") throw std::invalid_argument("cann-q8-nz must be 0 or 1");
@@ -214,7 +217,7 @@ service::service(options args) {
     const auto enabled = option(args, "--monitoring", "1");
     if (enabled != "0" && enabled != "1") throw std::invalid_argument("monitoring must be 0 or 1");
     setenv("GGML_CANN_TRANSFER_METRICS", enabled.c_str(), 1);
-    state.reset(new impl(std::move(args)));
+    state.reset(new impl(std::move(args), std::move(schedule)));
 }
 service::~service() = default;
 const json & service::info() const { return state->ready; }

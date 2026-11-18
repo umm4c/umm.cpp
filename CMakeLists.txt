@@ -26,16 +26,15 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp" 
 add_library(sd.cpp ALIAS stable-diffusion)
 target_include_directories(stable-diffusion PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp")
 
+add_subdirectory(src/scheduling)
+
 # UMM llama.cpp integration ---------------------------------------------------
 add_library(llama.cpp src/adapters/llama-cpp-adapter.cpp src/inference/model-registry.cpp)
 target_include_directories(llama.cpp PUBLIC include PRIVATE src "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/src")
-target_link_libraries(llama.cpp PUBLIC llama)
+target_link_libraries(llama.cpp PUBLIC llama PRIVATE umm-scheduling)
 
 # UMM runtime -----------------------------------------------------------------
 add_library(umm
-    src/scheduling/execution-policy.cpp
-    src/scheduling/random-plan.cpp
-    src/scheduling/weight-replicas.cpp
     src/inference/session.cpp
     src/adapters/diffusion-bridge.cpp
     src/inference/model-workflow.cpp
@@ -43,7 +42,7 @@ add_library(umm
     src/adapters/sd-cpp-adapter.cpp
 )
 target_include_directories(umm PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" PRIVATE src)
-target_link_libraries(umm PRIVATE llama.cpp sd.cpp)
+target_link_libraries(umm PRIVATE llama.cpp sd.cpp umm-scheduling)
 target_link_libraries(umm PRIVATE mtmd)
 
 # Command-line application ----------------------------------------------------
@@ -51,7 +50,7 @@ add_executable(umm-cli src/apps/main.cpp src/apps/cli.cpp src/runtime/image-io.c
 target_include_directories(umm-cli PRIVATE src
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"
 )
-target_link_libraries(umm-cli PRIVATE umm)
+target_link_libraries(umm-cli PRIVATE umm umm-scheduling)
 
 # Persistent, structured interface for serial benchmark replay.
 find_package(Threads REQUIRED)
@@ -62,7 +61,7 @@ target_include_directories(umm-runtime PUBLIC
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/vendor/hash/sha256"
     PRIVATE src)
-target_link_libraries(umm-runtime PUBLIC umm ggml Threads::Threads PRIVATE vendor::hash)
+target_link_libraries(umm-runtime PUBLIC umm ggml Threads::Threads PRIVATE vendor::hash umm-scheduling)
 add_executable(umm-session src/apps/bench-session.cpp)
 add_executable(umm-server src/apps/server.cpp)
 target_include_directories(umm-server PRIVATE src)

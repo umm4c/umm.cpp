@@ -48,6 +48,8 @@ struct interleave_result {
     std::vector<image_result> images;
 };
 
+struct understanding_schedule;
+
 class session {
 public:
     // Accept a model package directory, or an understanding GGUF and optional generation checkpoint.
@@ -58,6 +60,10 @@ public:
             const std::string & generation_max_vram = "",
             const std::string & vision_backend = "",
             int context_size = 0, int batch_size = 0, int microbatch_size = 0);
+    session(const std::string & model, const std::string & generation_model,
+            const std::string & understanding_backend, const std::string & generation_backend,
+            const std::string & generation_max_vram, const std::string & vision_backend,
+            int context_size, int batch_size, int microbatch_size, const understanding_schedule & schedule);
     ~session();
     session(const session &) = delete;
     session & operator=(const session &) = delete;

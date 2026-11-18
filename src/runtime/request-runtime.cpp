@@ -38,7 +38,7 @@ std::map<std::string, std::string> parse_options(int argc, char ** argv) {
         }
     }
     static const std::map<std::string, bool> allowed = {
-        {"--execution-policy", true}, {"--rpc-endpoint", true}, {"--local-device", true},
+        {"--execution-policy", true}, {"--rpc-endpoint", true}, {"--local-device", true}, {"--policy-seed", true}, {"--policy-cuts", true},
         {"--model", true}, {"--understanding-backend", true}, {"--vision-backend", true},
         {"--generation-backend", true}, {"--generation-max-vram", true},
         {"--steps", true}, {"--cfg", true}, {"--image-cfg", true}, {"--shift", true},
@@ -162,7 +162,7 @@ json weight_precision(const std::string & path) {
 }
 
 json runtime_identity(const std::string & model,
-                      const std::map<std::string, std::string> & options) {
+                      const std::map<std::string, std::string> & options, const std::string & secondary_backend) {
     const auto package = umm::resolve_model(model);
     json weights = json::object();
     for (const auto & component : package.components) {
@@ -181,19 +181,29 @@ json runtime_identity(const std::string & model,
     std::transform(q8_layout.begin(), q8_layout.end(), q8_layout.begin(), [](unsigned char ch) { return std::tolower(ch); });
     const bool q8_nz = q8_layout == "on" || q8_layout == "1" || q8_layout == "yes" ||
                        q8_layout == "y" || q8_layout == "enable" || q8_layout == "true";
+    const auto policy = option(options, "--execution-policy");
+    const bool mixed = !secondary_backend.empty();
+    const bool rpc = policy == "remote_910b";
+    const bool explicit_devices = !option(options, "--understanding-backend").empty() ||
+                                  !option(options, "--generation-backend").empty();
+    const char * policy_mode = mixed ? "graph_placement" : (explicit_devices ? "explicit_backend" : "automatic_backend");
+    auto understanding = backend_devices(option(options, "--understanding-backend"));
+    if (mixed) {
+        for (const auto & device : backend_devices(secondary_backend)) {
+            understanding.push_back(device);
+        }
+    }
     return {{"architecture", package.architecture},
             {"weights", weights},
             {"merged_lora", merged_lora},
             {"hardware", {{"physical_device", physical_device ? json(physical_device) : json(nullptr)},
-                           {"understanding", backend_devices(option(options, "--understanding-backend"))},
+                           {"understanding", understanding},
                            {"generation", backend_devices(option(options, "--generation-backend"))},
                            {"vision", backend_devices(option(options, "--vision-backend"))}}},
-            {"transport", {{"kind", option(options, "--execution-policy") == "remote_910b" ? "rpc" : "local"},
+            {"transport", {{"kind", mixed ? "mixed" : (rpc ? "rpc" : "local")},
                             {"endpoint", option(options, "--rpc-endpoint")},
-                            {"remote_metrics", option(options, "--execution-policy") == "remote_910b" ? "collected_on_worker" : "not_applicable"}}},
-            {"policy", {{"static_policy", option(options, "--execution-policy")}, {"mode", option(options, "--understanding-backend").empty() &&
-                                  option(options, "--generation-backend").empty() ?
-                                      "automatic_backend" : "explicit_backend"},
+                            {"remote_metrics", (mixed || rpc) ? "collected_on_worker" : "not_applicable"}}},
+            {"policy", {{"name", policy}, {"static_policy", mixed ? "" : policy}, {"mode", policy_mode},
                         {"strict_accelerator", strict != nullptr},
                         {"generation_max_vram", option(options, "--generation-max-vram")},
                         {"u1_prefill_mode", package.family == model_family::sensenova_u1 ? json("mixed4") : json(nullptr)},

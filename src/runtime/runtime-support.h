@@ -12,7 +12,7 @@ using json = nlohmann::json;
 using options = std::map<std::string, std::string>;
 options parse_options(int argc, char ** argv);
 std::string option(const options &, const std::string &, const std::string & fallback = "");
-json runtime_identity(const std::string &, const options &);
+json runtime_identity(const std::string &, const options &, const std::string & secondary_backend = "");
 json run_case(session &, const json &, const options &, bool http = false);
 json transfer_snapshot();
 

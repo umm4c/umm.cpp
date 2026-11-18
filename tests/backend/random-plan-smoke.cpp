@@ -1,4 +1,4 @@
-#include "scheduling/random-plan.h"
+#include "scheduling/policies/policy.h"
 #include "scheduling/weight-replicas.h"
 #include "scheduling/execution-policy.h"
 #include <algorithm>
@@ -75,8 +75,8 @@ std::vector<float> run(ggml_backend_t local, ggml_backend_t remote, ggml_backend
     if (resident && pure < 0) replicas.reset(new umm::weight_replicas({w}, {local, remote}));
     hook_state hook{&plan, replicas.get()};
     if (pure < 0) {
-        plan = umm::make_random_plan(graph, local, remote, seed, reverse, cuts);
-        const auto repeat = umm::make_random_plan(graph, local, remote, seed, reverse, cuts);
+        plan = umm::random_policy::plan(graph, local, remote, seed, reverse, cuts);
+        const auto repeat = umm::random_policy::plan(graph, local, remote, seed, reverse, cuts);
         if (repeat.cut_nodes != plan.cut_nodes || repeat.reverse != plan.reverse) throw std::runtime_error("Seed is not reproducible");
         ggml_backend_sched_set_placement_callback(sched.get(), placement_hook, &hook);
     } else {
@@ -138,18 +138,18 @@ void rejected_aliases(ggml_backend_t a, ggml_backend_t b) {
     auto graph=ggml_new_graph_custom(ctx.get(),16,false);ggml_build_forward_expand(graph,y);
     for (bool reverse : {false,true}) {
         bool rejected=false;
-        try { (void)umm::make_random_plan(graph,a,b,0,reverse); }
+        try { (void)umm::random_policy::plan(graph,a,b,0,reverse); }
         catch (const std::runtime_error &) { rejected=true; }
         if (!rejected) throw std::runtime_error("Unsafe alias partition was accepted");
     }
     for (int cuts : {0,2}) {
         bool rejected=false;
-        try { (void)umm::make_random_plan(graph,a,b,0,false,cuts); }
+        try { (void)umm::random_policy::plan(graph,a,b,0,false,cuts); }
         catch (const std::invalid_argument &) { rejected=true; }
         if (!rejected) throw std::runtime_error("Invalid cut count was accepted");
     }
     bool rejected=false;
-    try { (void)umm::make_random_plan(graph,a,a,0,false); }
+    try { (void)umm::random_policy::plan(graph,a,a,0,false); }
     catch (const std::invalid_argument &) { rejected=true; }
     if (!rejected) throw std::runtime_error("Duplicate device was accepted");
     std::puts("PASS pinned in-place alias rejects both single-cut directions");

@@ -1,4 +1,4 @@
-#include "execution-policy.h"
+#include "policies/policy.h"
 #include "ggml-backend.h"
 
 #include <cstdlib>
@@ -11,24 +11,6 @@ namespace {
 std::mutex registry_mutex;
 std::set<std::string> registered_endpoints;
 std::set<std::string> remote_cann_devices;
-
-std::string get(const execution_options & options, const std::string & key,
-                const std::string & fallback = "") {
-    const auto it = options.find(key);
-    return it == options.end() ? fallback : it->second;
-}
-
-void environment(const char * name, const std::string & value) {
-    if (setenv(name, value.c_str(), 1)) throw std::runtime_error(std::string("Cannot set ") + name);
-}
-
-void require_option(execution_options & options, const std::string & key, const std::string & value) {
-    const auto it = options.find(key);
-    if (it != options.end() && it->second != value) {
-        throw std::invalid_argument(key + " conflicts with the static execution policy");
-    }
-    options[key] = value;
-}
 }
 
 bool backend_uses_cann(const std::string & name) {
@@ -56,56 +38,91 @@ std::string register_remote_cann(const std::string & endpoint) {
     return selected;
 }
 
-execution_options configure_execution_policy(execution_options options) {
-    const auto policy = get(options, "--execution-policy");
-    if (policy.empty()) {
-        if (options.count("--rpc-endpoint") || options.count("--local-device")) {
-            throw std::invalid_argument("RPC/local device options require --execution-policy");
-        }
-        return options;
+namespace policy_options {
+
+std::string get(const execution_options & options, const std::string & key,
+                const std::string & fallback) {
+    const auto it = options.find(key);
+    return it == options.end() ? fallback : it->second;
+}
+
+void environment(const char * name, const std::string & value) {
+    if (setenv(name, value.c_str(), 1)) throw std::runtime_error(std::string("Cannot set ") + name);
+}
+
+void require(execution_options & options, const std::string & key, const std::string & value) {
+    const auto it = options.find(key);
+    if (it != options.end() && it->second != value) {
+        throw std::invalid_argument(key + " conflicts with the execution policy");
     }
-    if (policy != "local_310p" && policy != "remote_910b") {
-        throw std::invalid_argument("execution-policy must be local_310p or remote_910b");
+    options[key] = value;
+}
+
+std::string local_device(const execution_options & options) {
+    ggml_backend_load_all();
+    const auto selected = get(options, "--local-device", "CANN0");
+    auto device = ggml_backend_dev_by_name(selected.c_str());
+    if (!device || std::string(ggml_backend_reg_name(ggml_backend_dev_backend_reg(device))) != "CANN" ||
+        std::string(ggml_backend_dev_description(device)).find("310P") == std::string::npos) {
+        throw std::runtime_error("The selected local device must be an available Ascend310P CANN device");
     }
-    std::string selected;
-    if (policy == "remote_910b") {
-        const auto endpoint = get(options, "--rpc-endpoint");
-        if (endpoint.empty() || endpoint.find(':') == std::string::npos || options.count("--local-device")) {
-            throw std::invalid_argument("remote_910b requires --rpc-endpoint HOST:PORT and no local device");
-        }
-        require_option(options, "--cann-q8-nz", "0");
-        require_option(options, "--monitoring", "0");
-        environment("GGML_RPC_NO_RDMA", "1");
-        selected = register_remote_cann(endpoint);
-        environment("GGML_RPC_CANN_DEVICE", selected);
-    } else {
-        if (options.count("--rpc-endpoint")) throw std::invalid_argument("local_310p cannot use an RPC endpoint");
-        ggml_backend_load_all();
-        selected = get(options, "--local-device", "CANN0");
-        auto device = ggml_backend_dev_by_name(selected.c_str());
-        if (!device || std::string(ggml_backend_reg_name(ggml_backend_dev_backend_reg(device))) != "CANN" ||
-            std::string(ggml_backend_dev_description(device)).find("310P") == std::string::npos) {
-            throw std::runtime_error("local_310p requires an available Ascend310P CANN device");
-        }
-        options.emplace("--cann-q8-nz", "1");
+    return selected;
+}
+
+std::string rpc_endpoint(const execution_options & options, const char * policy) {
+    const auto endpoint = get(options, "--rpc-endpoint");
+    if (endpoint.empty() || endpoint.find(':') == std::string::npos) {
+        throw std::invalid_argument(std::string(policy) + " requires --rpc-endpoint HOST:PORT");
     }
-    if (const char * previous = std::getenv("GGML_REQUIRED_DEVICE")) {
-        if (selected != previous) throw std::invalid_argument("A process cannot change its static execution device");
-    }
+    return endpoint;
+}
+
+void configure_devices(execution_options & options, const std::string & selected) {
     for (const char * key : {"--understanding-backend", "--generation-backend", "--vision-backend"}) {
-        require_option(options, key, selected);
+        require(options, key, selected);
     }
     options.emplace("--generation-max-vram", selected + "=40");
     if (get(options, "--generation-max-vram").rfind(selected + "=", 0) != 0 ||
         get(options, "--generation-max-vram").find(',') != std::string::npos) {
-        throw std::invalid_argument("generation-max-vram must refer only to the static execution device");
+        throw std::invalid_argument("generation-max-vram must refer only to the selected generation device");
     }
     options.emplace("--n-ctx", "2048");
     options.emplace("--n-batch", "512");
     options.emplace("--n-ubatch", "256");
     environment("GGML_CANN_Q8_NZ", get(options, "--cann-q8-nz"));
     environment("GGML_SCHED_STRICT_ACCEL", "1");
-    environment("GGML_REQUIRED_DEVICE", selected);
-    return options;
 }
+
+void require_execution_device(const std::string & selected) {
+    if (const char * previous = std::getenv("GGML_REQUIRED_DEVICE")) {
+        if (selected != previous) throw std::invalid_argument("A process cannot change its static execution device");
+    }
+}
+
+}
+
+understanding_schedule configure_execution_policy(execution_options & options) {
+    static const local_310p_policy local;
+    static const remote_910b_policy remote;
+    static const random_policy random;
+    static const std::map<std::string, const execution_policy *> policies = {
+        {"local_310p", &local}, {"remote_910b", &remote}, {"random", &random},
+    };
+    const auto name = policy_options::get(options, "--execution-policy");
+    if (name != "random" && (options.count("--policy-seed") || options.count("--policy-cuts"))) {
+        throw std::invalid_argument("--policy-seed and --policy-cuts require --execution-policy random");
+    }
+    if (name.empty()) {
+        if (options.count("--rpc-endpoint") || options.count("--local-device")) {
+            throw std::invalid_argument("RPC/local device options require --execution-policy");
+        }
+        return {};
+    }
+    const auto policy = policies.find(name);
+    if (policy == policies.end()) {
+        throw std::invalid_argument("execution-policy must be local_310p, remote_910b or random");
+    }
+    return policy->second->apply(options);
+}
+
 }

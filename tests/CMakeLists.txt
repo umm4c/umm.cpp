@@ -19,15 +19,11 @@ if(UMM_BUILD_BACKEND_SMOKE)
     add_executable(umm-rope-cache-smoke backend/rope-cache-smoke.cpp)
     target_link_libraries(umm-rope-cache-smoke PRIVATE ggml)
 
-    add_executable(umm-backend-smoke backend/backend-smoke.cpp
-        "${PROJECT_SOURCE_DIR}/src/scheduling/execution-policy.cpp")
+    add_executable(umm-backend-smoke backend/backend-smoke.cpp)
     target_include_directories(umm-backend-smoke PRIVATE "${PROJECT_SOURCE_DIR}/src")
-    target_link_libraries(umm-backend-smoke PRIVATE ggml)
+    target_link_libraries(umm-backend-smoke PRIVATE umm-scheduling ggml)
 
-    add_executable(umm-random-plan-smoke backend/random-plan-smoke.cpp
-        "${PROJECT_SOURCE_DIR}/src/scheduling/random-plan.cpp"
-        "${PROJECT_SOURCE_DIR}/src/scheduling/weight-replicas.cpp"
-        "${PROJECT_SOURCE_DIR}/src/scheduling/execution-policy.cpp")
+    add_executable(umm-random-plan-smoke backend/random-plan-smoke.cpp)
     target_include_directories(umm-random-plan-smoke PRIVATE "${PROJECT_SOURCE_DIR}/src")
-    target_link_libraries(umm-random-plan-smoke PRIVATE ggml)
+    target_link_libraries(umm-random-plan-smoke PRIVATE umm-scheduling ggml)
 endif()

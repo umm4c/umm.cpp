@@ -1,6 +1,6 @@
 #include "scheduling/execution-policy.h"
 #include "adapters/llama-cpp-adapter.h"
-#include "scheduling/random-plan.h"
+#include "scheduling/policies/policy.h"
 #include "scheduling/weight-replicas.h"
 #include "json.hpp"
 #include <algorithm>
@@ -46,7 +46,7 @@ bool place(ggml_backend_sched_t sched,ggml_cgraph * graph,bool allocated,void * 
             if (state.mode=="random") {
                 if (ggml_backend_sched_get_n_backends(sched)<3) throw std::runtime_error("Mixed model requires two accelerator backends");
                 auto start=clock_type::now();
-                state.plan=umm::make_random_plan(graph,ggml_backend_sched_get_backend(sched,0),
+                state.plan=umm::random_policy::plan(graph,ggml_backend_sched_get_backend(sched,0),
                     ggml_backend_sched_get_backend(sched,1),state.seed,state.flip,state.cuts);
                 state.planning_ms=ms(start);
                 state.weight_bindings=state.replicas ? state.replicas->bind(sched,state.plan) : 0;

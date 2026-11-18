@@ -1,4 +1,7 @@
-#include "random-plan.h"
+#include "policy.h"
+
+#include <charconv>
+#include <cstdlib>
 #include <algorithm>
 #include <random>
 #include <stdexcept>
@@ -53,7 +56,64 @@ bool candidate(ggml_cgraph * graph, ggml_backend_t a, ggml_backend_t b, const st
     return true;
 }
 }
-random_plan make_random_plan(ggml_cgraph * graph, ggml_backend_t first,
+namespace {
+template<typename T>
+T parse_number(const execution_options & options, const char * key, const char * fallback) {
+    const auto value = policy_options::get(options, key, fallback);
+    T number{};
+    const char * end = value.data() + value.size();
+    const auto parsed = std::from_chars(value.data(), end, number);
+    if (parsed.ec != std::errc{} || parsed.ptr != end) {
+        throw std::invalid_argument(std::string("Invalid integer for ") + key);
+    }
+    return number;
+}
+}
+
+understanding_schedule random_policy::apply(execution_options & options) const {
+    using namespace policy_options;
+    const auto seed = parse_number<uint32_t>(options, "--policy-seed", "0");
+    const auto cuts = parse_number<int>(options, "--policy-cuts", "1");
+    if (cuts < 1) {
+        throw std::invalid_argument("--policy-cuts must be positive");
+    }
+    options["--policy-seed"] = std::to_string(seed);
+    options["--policy-cuts"] = std::to_string(cuts);
+    const auto endpoint = rpc_endpoint(options, "random");
+    if (std::getenv("GGML_REQUIRED_DEVICE")) {
+        throw std::invalid_argument("random cannot use a process-wide required device");
+    }
+    const auto local = local_device(options);
+    require(options, "--cann-q8-nz", "0");
+    configure_devices(options, local);
+    environment("GGML_RPC_NO_RDMA", "1");
+    const auto remote = register_remote_cann(endpoint);
+    const auto primary = ggml_backend_dev_by_name(local.c_str());
+    const auto secondary = ggml_backend_dev_by_name(remote.c_str());
+
+    return {remote, [primary, secondary, seed, cuts, placement = random_plan{}](
+            ggml_backend_sched_t sched, ggml_cgraph * graph, bool allocated) mutable {
+        if (allocated) {
+            check_random_plan(sched, placement);
+            return;
+        }
+        ggml_backend_t local_backend = nullptr;
+        ggml_backend_t remote_backend = nullptr;
+        for (int i = 0; i < ggml_backend_sched_get_n_backends(sched); ++i) {
+            const auto backend = ggml_backend_sched_get_backend(sched, i);
+            const auto device = ggml_backend_get_device(backend);
+            if (device == primary) local_backend = backend;
+            if (device == secondary) remote_backend = backend;
+        }
+        if (!local_backend || !remote_backend) {
+            throw std::runtime_error("Random placement requires both configured devices in the scheduler");
+        }
+        placement = plan(graph, local_backend, remote_backend, seed, false, cuts);
+        assign_random_plan(sched, placement);
+    }};
+}
+
+random_plan random_policy::plan(ggml_cgraph * graph, ggml_backend_t first,
                                    ggml_backend_t second, uint32_t seed, bool reverse, int cut_count) {
     if (!graph || !first || !second || ggml_backend_get_device(first) == ggml_backend_get_device(second)) {
         throw std::invalid_argument("Random partition requires a graph and two distinct devices");

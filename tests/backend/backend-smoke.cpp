@@ -20,7 +20,7 @@ int main(int argc, char ** argv) {
             setenv("GGML_REQUIRED_DEVICE", "FORBIDDEN_TEST_DEVICE", 1);
         } else {
             if (argc >= 3) options[std::string(argv[1]) == "local_310p" ? "--local-device" : "--rpc-endpoint"] = argv[2];
-            options = umm::configure_execution_policy(std::move(options));
+            umm::configure_execution_policy(options);
         }
         if (argc == 4 && std::string(argv[3]) != "saturation") throw std::invalid_argument("Unknown backend smoke mode");
         auto backend = ggml_backend_init_by_name(options.at("--understanding-backend").c_str(), nullptr);

@@ -64,13 +64,32 @@ The design has three practical properties:
 | --- | --- |
 | `src/inference/` | Model packages, sessions, and multimodal workflows |
 | `src/adapters/` | llama.cpp and sd.cpp integration, including the KV bridge |
-| `src/scheduling/` | Device policies, random placement, and weight replicas |
+| `src/scheduling/` | Execution policy selection, graph placement, and weight replicas |
+| `src/scheduling/policies/` | One implementation per policy: local 310P, remote 910B, and random placement |
 | `src/runtime/` | Request handling, HTTP, monitoring, and image I/O |
 | `src/profiling/` | Graph capture, candidate measurement, and profile export |
 | `src/apps/` | CLI, session, and server entry points |
 | `include/` | Session API and its public types |
 | `tools/` | Profiler CLI, capture validator, and model experiment tools |
 | `tests/` | Profiling regressions, backend smoke tests, and RPC tunnel tests |
+
+### Execution policies
+
+`umm-cli`, `umm-session`, and `umm-server` share the same `--execution-policy` options.
+`local_310p` and `remote_910b` pin all model graphs to one device. `random` splits
+the understanding graphs between the configured local 310P and RPC worker.
+Vision encoding and diffusion run on the local device.
+
+```bash
+./build/bin/umm-cli --model /path/to/package --execution-policy random \
+  --local-device CANN0 --rpc-endpoint 127.0.0.1:50053 \
+  --mode text --prompt "Describe the moon." --max-tokens 8
+```
+
+`--policy-seed` defaults to `0` and `--policy-cuts` defaults to `1`.
+The latter is the number of cut points per understanding graph. Placement is
+checked when the scheduler allocates a graph. The seed controls placement and
+is independent of the image sampling seed.
 
 ## Supported models
 

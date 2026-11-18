@@ -2,10 +2,12 @@
 
 #include "model-registry.h"
 #include "request-metrics.h"
+#include "scheduling/execution-policy.h"
 #include "llama.h"
 #include "ggml-backend.h"
 
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <string>
 #include <vector>
@@ -44,6 +46,7 @@ public:
     void reset();
     void synchronize();
     ggml_backend_sched_t scheduler() const;
+    void set_placement(graph_placement placement);
     std::vector<ggml_tensor *> weights() const;
     void append(const std::vector<llama_token> & tokens, bool need_logits = true,
                 request_metrics * metrics = nullptr);
@@ -83,6 +86,8 @@ private:
     std::vector<float> token_embeddings(const std::vector<llama_token> & tokens);
     std::string architecture_;
     model_family family_ = model_family::unknown;
+    graph_placement placement_;
+    std::exception_ptr placement_error_;
     llama_model_kv_override overrides_[2]{};
     std::unique_ptr<llama_model, decltype(&llama_model_free)> model_{nullptr, llama_model_free};
     std::unique_ptr<llama_context, decltype(&llama_free)> context_{nullptr, llama_free};
