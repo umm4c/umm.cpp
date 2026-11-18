@@ -1,10 +1,10 @@
 #include "image-io.h"
-#include "execution-policy.h"
+#include "scheduling/execution-policy.h"
 #include "build-identity.h"
 #include "ggml-backend.h"
 #include "gguf.h"
 #include "json.hpp"
-#include "model-package.h"
+#include "inference/model-package.h"
 #include "session.h"
 #include "runtime-support.h"
 

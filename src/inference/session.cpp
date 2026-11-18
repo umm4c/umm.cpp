@@ -1,14 +1,14 @@
 #include "profile-context.h"
 #include "session.h"
-#include "execution-policy.h"
+#include "scheduling/execution-policy.h"
 
-#include "diffusion-bridge.h"
+#include "adapters/diffusion-bridge.h"
 #include "ggml-backend.h"
-#include "llama-cpp-adapter.h"
+#include "adapters/llama-cpp-adapter.h"
 #include "model-package.h"
 #include "model-workflow.h"
 #include "stable-diffusion.h"
-#include "sd-cpp-adapter.h"
+#include "adapters/sd-cpp-adapter.h"
 
 #include <algorithm>
 #include <cstdio>

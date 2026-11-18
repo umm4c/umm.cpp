@@ -58,6 +58,20 @@ The design has three practical properties:
 - Both engines run in one process and share ggml, while each executes its own
   forward pass independently.
 
+### Source layout
+
+| Directory | Responsibility |
+| --- | --- |
+| `src/inference/` | Model packages, sessions, and multimodal workflows |
+| `src/adapters/` | llama.cpp and sd.cpp integration, including the KV bridge |
+| `src/scheduling/` | Device policies, random placement, and weight replicas |
+| `src/runtime/` | Request handling, HTTP, monitoring, and image I/O |
+| `src/profiling/` | Graph capture, candidate measurement, and profile export |
+| `src/apps/` | CLI, session, and server entry points |
+| `include/` | Session API and its public types |
+| `tools/` | Profiler CLI, capture validator, and model experiment tools |
+| `tests/` | Profiling regressions, backend smoke tests, and RPC tunnel tests |
+
 ## Supported models
 
 | Model family | Current support |

@@ -232,7 +232,7 @@ cmake --build build-profiler --target umm-profiler-observer-test umm-profiler-ca
 build-profiler/bin/umm-profiler-candidate-test
 build-profiler/bin/umm-profiler-contract-test
 build-profiler/bin/umm-profiler-observer-test
-python3 tools/profiler/test_interface.py build-profiler/bin/umm-profiler
+python3 tests/profiling/test_interface.py build-profiler/bin/umm-profiler
 python3 tools/profiler/validate_capture.py /path/to/new-profile
 ```
 

@@ -1,5 +1,5 @@
 #include "sd-cpp-adapter.h"
-#include "execution-policy.h"
+#include "scheduling/execution-policy.h"
 
 #include "stable-diffusion.h"
 #include "ggml-backend.h"

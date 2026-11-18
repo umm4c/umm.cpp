@@ -1,12 +1,12 @@
 #include "profiler.h"
-#include "profile-context.h"
+#include "inference/profile-context.h"
 #include "profiler-annotations.h"
 #include "profiler-hierarchy.h"
 #include "profiler-graph-contract.h"
 #include <memory>
-#include "runtime-support.h"
-#include "execution-policy.h"
-#include "model-package.h"
+#include "runtime/runtime-support.h"
+#include "scheduling/execution-policy.h"
+#include "inference/model-package.h"
 #include "ggml-backend.h"
 #ifdef GGML_USE_RPC
 #include "ggml-rpc.h"

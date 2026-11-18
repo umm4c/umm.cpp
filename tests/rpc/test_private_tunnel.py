@@ -7,7 +7,7 @@ import threading
 import unittest
 from unittest.mock import patch, Mock
 
-spec = importlib.util.spec_from_file_location('tunnel', Path(__file__).with_name('private-tunnel.py'))
+spec = importlib.util.spec_from_file_location('tunnel', Path(__file__).resolve().parents[2] / 'scripts' / 'rpc' / 'private-tunnel.py')
 tunnel = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tunnel)
 

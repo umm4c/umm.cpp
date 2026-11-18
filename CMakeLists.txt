@@ -27,43 +27,45 @@ add_library(sd.cpp ALIAS stable-diffusion)
 target_include_directories(stable-diffusion PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp")
 
 # UMM llama.cpp integration ---------------------------------------------------
-add_library(llama.cpp src/llama-cpp-adapter.cpp src/model-registry.cpp)
-target_include_directories(llama.cpp PUBLIC include PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/src")
+add_library(llama.cpp src/adapters/llama-cpp-adapter.cpp src/inference/model-registry.cpp)
+target_include_directories(llama.cpp PUBLIC include PRIVATE src "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/src")
 target_link_libraries(llama.cpp PUBLIC llama)
 
 # UMM runtime -----------------------------------------------------------------
 add_library(umm
-    src/execution-policy.cpp
-    src/random-plan.cpp
-    src/weight-replicas.cpp
-    src/session.cpp
-    src/diffusion-bridge.cpp
-    src/model-workflow.cpp
-    src/model-package.cpp
-    src/sd-cpp-adapter.cpp
+    src/scheduling/execution-policy.cpp
+    src/scheduling/random-plan.cpp
+    src/scheduling/weight-replicas.cpp
+    src/inference/session.cpp
+    src/adapters/diffusion-bridge.cpp
+    src/inference/model-workflow.cpp
+    src/inference/model-package.cpp
+    src/adapters/sd-cpp-adapter.cpp
 )
-target_include_directories(umm PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(umm PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" PRIVATE src)
 target_link_libraries(umm PRIVATE llama.cpp sd.cpp)
 target_link_libraries(umm PRIVATE mtmd)
 
 # Command-line application ----------------------------------------------------
-add_executable(umm-cli src/main.cpp src/cli.cpp src/image-io.cpp)
-target_include_directories(umm-cli PRIVATE
+add_executable(umm-cli src/apps/main.cpp src/apps/cli.cpp src/runtime/image-io.cpp)
+target_include_directories(umm-cli PRIVATE src
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"
 )
 target_link_libraries(umm-cli PRIVATE umm)
 
 # Persistent, structured interface for serial benchmark replay.
 find_package(Threads REQUIRED)
-add_library(umm-runtime STATIC src/request-runtime.cpp src/runtime-service.cpp
-    src/system-monitor.cpp src/runtime-http.cpp src/image-io.cpp)
-target_include_directories(umm-runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src"
+add_library(umm-runtime STATIC src/runtime/request-runtime.cpp src/runtime/runtime-service.cpp
+    src/runtime/system-monitor.cpp src/runtime/runtime-http.cpp src/runtime/image-io.cpp)
+target_include_directories(umm-runtime PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/vendor/hash/sha256")
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/vendor/hash/sha256"
+    PRIVATE src)
 target_link_libraries(umm-runtime PUBLIC umm ggml Threads::Threads PRIVATE vendor::hash)
-add_executable(umm-session src/bench-session.cpp)
-add_executable(umm-server src/server.cpp)
+add_executable(umm-session src/apps/bench-session.cpp)
+add_executable(umm-server src/apps/server.cpp)
+target_include_directories(umm-server PRIVATE src)
 target_link_libraries(umm-server PRIVATE umm-runtime)
 
 add_custom_target(umm-build-identity
@@ -73,7 +75,7 @@ add_custom_target(umm-build-identity
     BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/build-identity.h"
     VERBATIM)
 add_dependencies(umm-runtime umm-build-identity)
-target_include_directories(umm-session PRIVATE
+target_include_directories(umm-session PRIVATE src
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/ggml/include"
@@ -81,21 +83,8 @@ target_include_directories(umm-session PRIVATE
 target_link_libraries(umm-session PRIVATE umm-runtime)
 
 option(UMM_BUILD_BACKEND_SMOKE "Build the static backend integration probe" OFF)
-if(UMM_BUILD_BACKEND_SMOKE)
-    add_executable(umm-rope-cache-smoke tools/rope-cache-smoke.cpp)
-    target_link_libraries(umm-rope-cache-smoke PRIVATE ggml)
 
-    add_executable(umm-backend-smoke tools/backend-smoke.cpp src/execution-policy.cpp)
-    target_include_directories(umm-backend-smoke PRIVATE include)
-    target_link_libraries(umm-backend-smoke PRIVATE ggml)
-
-    add_executable(umm-random-plan-smoke tools/random-plan-smoke.cpp src/random-plan.cpp src/weight-replicas.cpp src/execution-policy.cpp)
-    target_include_directories(umm-random-plan-smoke PRIVATE include)
-    target_link_libraries(umm-random-plan-smoke PRIVATE ggml)
-    add_executable(umm-random-model-run tools/random-model-run.cpp)
-    target_include_directories(umm-random-model-run PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty")
-    target_link_libraries(umm-random-model-run PRIVATE umm llama.cpp ggml)
-endif()
-
-# Profiling reuses the production runtime and shared graph backends.
-add_subdirectory(tools/profiler)
+# Profiling reuses the runtime. Tools and tests consume the production targets.
+add_subdirectory(src/profiling)
+add_subdirectory(tools)
+add_subdirectory(tests)

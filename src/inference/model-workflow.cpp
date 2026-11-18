@@ -1,8 +1,8 @@
 #include "profile-context.h"
 #include "model-workflow.h"
 
-#include "llama-cpp-adapter.h"
-#include "sd-cpp-adapter.h"
+#include "adapters/llama-cpp-adapter.h"
+#include "adapters/sd-cpp-adapter.h"
 #include "stable-diffusion.h"
 
 #include <algorithm>

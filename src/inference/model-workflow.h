@@ -1,6 +1,6 @@
 #pragma once
 
-#include "diffusion-bridge.h"
+#include "adapters/diffusion-bridge.h"
 #include "model-registry.h"
 #include "session.h"
 

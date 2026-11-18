@@ -1,6 +1,6 @@
 #include "runtime-support.h"
-#include "execution-policy.h"
-#include "model-package.h"
+#include "scheduling/execution-policy.h"
+#include "inference/model-package.h"
 extern "C" {
 #include "sha256.h"
 }

@@ -6,7 +6,7 @@
 #include "stb_image_write.h"
 
 #include "image-io.h"
-#include "../third_party/llama.cpp/common/base64.hpp"
+#include "../../third_party/llama.cpp/common/base64.hpp"
 
 #include <stdexcept>
 #include <limits>

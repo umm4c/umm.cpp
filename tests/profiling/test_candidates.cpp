@@ -1,4 +1,4 @@
-#include "profiler-candidates.h"
+#include "profiling/profiler-candidates.h"
 #include "ggml-cpu.h"
 #include "ggml-alloc.h"
 #include <cstdio>

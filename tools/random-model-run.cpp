@@ -1,7 +1,7 @@
-#include "execution-policy.h"
-#include "llama-cpp-adapter.h"
-#include "random-plan.h"
-#include "weight-replicas.h"
+#include "scheduling/execution-policy.h"
+#include "adapters/llama-cpp-adapter.h"
+#include "scheduling/random-plan.h"
+#include "scheduling/weight-replicas.h"
 #include "json.hpp"
 #include <algorithm>
 #include <chrono>

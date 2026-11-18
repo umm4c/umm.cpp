@@ -1,6 +1,6 @@
-#include "random-plan.h"
-#include "weight-replicas.h"
-#include "execution-policy.h"
+#include "scheduling/random-plan.h"
+#include "scheduling/weight-replicas.h"
+#include "scheduling/execution-policy.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>

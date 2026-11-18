@@ -1,4 +1,4 @@
-#include "profiler-graph-contract.h"
+#include "profiling/profiler-graph-contract.h"
 #include "ggml-cpu.h"
 #include "ggml-alloc.h"
 #include <cstdio>

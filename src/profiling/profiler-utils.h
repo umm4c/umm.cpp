@@ -1,6 +1,6 @@
 #pragma once
 #include "hash/hash.h"
-#include "../third_party/llama.cpp/common/base64.hpp"
+#include "../../third_party/llama.cpp/common/base64.hpp"
 #include "json.hpp"
 #include <algorithm>
 #include <chrono>

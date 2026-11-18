@@ -1,7 +1,7 @@
 #include "cli.h"
-#include "execution-policy.h"
+#include "scheduling/execution-policy.h"
 
-#include "image-io.h"
+#include "runtime/image-io.h"
 #include "json.hpp"
 #include "session.h"
 

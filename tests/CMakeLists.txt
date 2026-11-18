@@ -1,0 +1,33 @@
+add_executable(umm-profiler-observer-test EXCLUDE_FROM_ALL profiling/test_observer.cpp)
+target_include_directories(umm-profiler-observer-test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/llama.cpp/ggml/src")
+target_link_libraries(umm-profiler-observer-test PRIVATE ggml Threads::Threads)
+add_executable(umm-profiler-candidate-test EXCLUDE_FROM_ALL profiling/test_candidates.cpp "${PROJECT_SOURCE_DIR}/src/profiling/profiler-candidates.cpp")
+target_compile_features(umm-profiler-candidate-test PRIVATE cxx_std_17)
+target_include_directories(umm-profiler-candidate-test PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty" "${PROJECT_SOURCE_DIR}/third_party/llama.cpp/vendor/hash/sha256")
+target_link_libraries(umm-profiler-candidate-test PRIVATE ggml vendor::hash Threads::Threads)
+if(GGML_RPC)
+    add_executable(umm-profiler-rpc-fence-test EXCLUDE_FROM_ALL profiling/test_rpc_fence.cpp)
+    target_include_directories(umm-profiler-rpc-fence-test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty")
+    target_link_libraries(umm-profiler-rpc-fence-test PRIVATE ggml Threads::Threads)
+endif()
+add_executable(umm-profiler-contract-test EXCLUDE_FROM_ALL profiling/test_graph_contract.cpp)
+target_compile_features(umm-profiler-contract-test PRIVATE cxx_std_17)
+target_include_directories(umm-profiler-contract-test PRIVATE "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty")
+target_link_libraries(umm-profiler-contract-test PRIVATE ggml Threads::Threads vendor::hash)
+
+if(UMM_BUILD_BACKEND_SMOKE)
+    add_executable(umm-rope-cache-smoke backend/rope-cache-smoke.cpp)
+    target_link_libraries(umm-rope-cache-smoke PRIVATE ggml)
+
+    add_executable(umm-backend-smoke backend/backend-smoke.cpp
+        "${PROJECT_SOURCE_DIR}/src/scheduling/execution-policy.cpp")
+    target_include_directories(umm-backend-smoke PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    target_link_libraries(umm-backend-smoke PRIVATE ggml)
+
+    add_executable(umm-random-plan-smoke backend/random-plan-smoke.cpp
+        "${PROJECT_SOURCE_DIR}/src/scheduling/random-plan.cpp"
+        "${PROJECT_SOURCE_DIR}/src/scheduling/weight-replicas.cpp"
+        "${PROJECT_SOURCE_DIR}/src/scheduling/execution-policy.cpp")
+    target_include_directories(umm-random-plan-smoke PRIVATE "${PROJECT_SOURCE_DIR}/src")
+    target_link_libraries(umm-random-plan-smoke PRIVATE ggml)
+endif()

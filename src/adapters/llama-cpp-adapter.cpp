@@ -1,6 +1,6 @@
-#include "profile-context.h"
+#include "inference/profile-context.h"
 #include "llama-cpp-adapter.h"
-#include "execution-policy.h"
+#include "scheduling/execution-policy.h"
 
 // Keep the dependency on llama's cache layout in this adapter only.
 #include "llama-context.h"

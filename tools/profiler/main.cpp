@@ -1,4 +1,4 @@
-#include "profiler.h"
+#include "profiling/profiler.h"
 #include <fstream>
 #include <filesystem>
 #include <iostream>

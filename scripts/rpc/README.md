@@ -158,4 +158,4 @@ that a fixed small-boundary full-model plan becomes faster. The 6.1 worker on
 50053 retains its old cache policy even when reached through the new route;
 6.2 dynamic-upload optimization requires a matching new worker. Preserve endpoint,
 SSH connection state, worker binary and cache policy with new profiler costs.
-Run `python3 scripts/rpc/test_private_tunnel.py` for protocol/SSH command checks.
+Run `python3 tests/rpc/test_private_tunnel.py` for protocol/SSH command checks.
