@@ -438,7 +438,7 @@ See [session.h](include/session.h) for the public interface and defaults.
 
 Existing captures can be explored with the offline [Graph Atlas viewer](../utils/profiler-viewer/README.md): folded layers, operator dependencies, exact candidate boundaries and measured cost comparisons.
 
-The [profiler](tools/profiler/README.md) replays a model and representative workload
+The [profiler](tools/profiler-cli/README.md) replays a model and representative workload
 on a device list, exporting real graphs, placement and synchronized host timings.
 The first collector supports SenseNova U1 with local 310P and existing CANN RPC
 workers. It automatically selects closed FFN candidates, captures real boundary

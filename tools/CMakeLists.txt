@@ -1,4 +1,4 @@
-add_subdirectory(profiler)
+add_subdirectory(profiler-cli)
 
 if(UMM_BUILD_BACKEND_SMOKE)
     add_executable(umm-random-model-run random-model-run.cpp)

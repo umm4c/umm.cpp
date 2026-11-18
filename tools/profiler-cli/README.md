@@ -11,13 +11,13 @@ Configure the UMM root using the same CANN environment as normal inference:
 ```bash
 cmake -S . -B build-profiler -DGGML_CANN=ON -DGGML_RPC=ON -DSOC_TYPE=Ascend310P3 -DCMAKE_BUILD_TYPE=Release
 cmake --build build-profiler --target umm-profiler -j 4
-build-profiler/bin/umm-profiler --request tools/profiler/request.example.json --out /path/to/new-profile
+build-profiler/bin/umm-profiler --request tools/profiler-cli/request.example.json --out /path/to/new-profile
 ```
 
 Run inside the deployment container, with the requested local device and input
 paths visible and output parent writable. The RPC endpoint must already be
 reachable (for example through the existing SSH tunnel). The profiler does not
-start workers or tunnels. Building from `tools/profiler` alone is no longer
+start workers or tunnels. Building from `tools/profiler-cli/` alone is no longer
 supported: the real collector links the production runtime and shared GGML.
 No new product feature flag is required; regular inference does not enable the
 observer or add graph synchronization.
@@ -233,7 +233,7 @@ build-profiler/bin/umm-profiler-candidate-test
 build-profiler/bin/umm-profiler-contract-test
 build-profiler/bin/umm-profiler-observer-test
 python3 tests/profiling/test_interface.py build-profiler/bin/umm-profiler
-python3 tools/profiler/validate_capture.py /path/to/new-profile
+python3 tools/profiler-cli/validate_capture.py /path/to/new-profile
 ```
 
 The observer check uses CPU graphs to cover direct/scheduler/reused execution,
