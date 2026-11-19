@@ -1,433 +1,153 @@
 # umm.cpp
 
-Unified multimodal inference in C++.
+umm.cpp 是 C++ 多模态推理框架，提供命令行、HTTP 和 C++ API，支持文本生成、图像理解和生图。
 
-`umm.cpp` brings text and image generation together through a modular design:
-[llama.cpp](https://github.com/ggml-org/llama.cpp) runs the text branch,
-[stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) (sd.cpp)
-runs the image branch, and `umm.cpp` coordinates their interaction behind a
-unified command-line interface and C++ API.
+## 支持的模型
 
-[Modular design](#modular-design) • [Supported models](#supported-models) •
-[Platform support](#platform-support) •
-[Quick start](#quick-start) • [C++ API](#c-api)
-
-## Updates
-- [ ] Performance measurement and NPU support
-- [x] Sep 10: add BAGEL support.
-- [x] Sep 9: Initial version is ready. It supports SenseNova U1 series model. It can do Text / Image / Text(reasoning)-then-Image generation.
-
-## Modular design
-
-The core idea is to keep each branch's computation in its dedicated inference
-engine and handle the interaction between branches in `umm.cpp`.
-
-| Component | Responsibility |
+| 模型系列 | 当前支持情况 |
 | --- | --- |
-| **llama.cpp** | Understanding-branch execution and autoregressive text generation |
-| **sd.cpp** | Image-generation branch execution, pixel-flow sampling, and image decoding |
-| **umm.cpp** (this repo) | Model-specific prompt formatting, text/image phase sequencing, state transfer between branches, and a unified user interface |
+| [SenseNova U1 系列](https://github.com/OpenSenseNova/SenseNova-U1) | 首个接入的模型系列，当前实现和验证覆盖稠密版 SenseNova U1.5 |
+| [BAGEL-7B-MoT](https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT) | F16 文本生成、生图和图像理解已在昇腾 310P 上跑通。编辑模式可以执行，但生成的编辑结果仍会退化为噪声，质量尚未通过验证。使用 Q8_0 理解权重和 F16 生成权重可单卡生图。 |
 
-SenseNova U1 and BAGEL both use a MoT structure that separates multimodal
-inference into a language side and an image side, but they package the bridge
-differently.
-- U1 transfers the
-understanding prefix's attention key/value (K/V) state from llama.cpp to sd.cpp.
-- BAGEL uses llama.cpp for text, reasoning, and vision-token sequencing, then uses
-sd.cpp for the diffusion branch with the BAGEL-specific latent/image handoff.
-- This repo, `umm.cpp`, owns that model-specific sequencing so the public CLI and C++ API stay
-consistent across models.
+## 构建与模型准备
 
-```mermaid
-flowchart LR
-    P[Prompt] --> U["umm.cpp: unified CLI / C++ API"]
-    X[Input image] --> U
-    U --> L["llama.cpp: text, reasoning, and understanding"]
-    L --> T[Text answer]
-    L --> H["umm.cpp: model-specific branch handoff"]
-    X --> H
-    H --> S["sd.cpp: image generation and editing"]
-    S --> I[Image]
-```
+需要 Git、CMake 3.21+ 和 C++17 编译器。在仓库根目录按当前 UMM 提交锁定的子模块版本初始化依赖，然后构建。
 
-The design has three practical properties:
-
-- Each engine owns the model graphs and kernels it executes.
-- New model integrations reuse the shared layers and add their own prompt
-  grammar, package components, and branch handoff rules.
-- Both engines run in one process and share ggml, while each executes its own
-  forward pass independently.
-
-## Supported models
-
-| Model family | Current support |
-| --- | --- |
-| [SenseNova U1 series](https://github.com/OpenSenseNova/SenseNova-U1) | Initial model family; the current implementation and validation cover the dense SenseNova U1.5 checkpoint |
-| [BAGEL-7B-MoT](https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT) | F16 text, image generation, and image understanding run on Ascend 310P. The edit modes execute, but generated edits still degrade to noise and are not quality-validated. Single-card image generation works with Q8_0 understanding and F16 generation weights. |
-| Additional model families | Planned; Hunyuan Image is a likely next target |
-
-The interface provides these modes:
-
-| Mode | Output |
-| --- | --- |
-| `text` | Autoregressive text |
-| `image` | An image conditioned on the prompt |
-| `think-image` | Reasoning followed by an image |
-| `understand`, `think-understand` | Answer a question about an input image |
-| `edit`, `think-edit` | Edit an input image, optionally with reasoning |
-
-## Platform support
-
-Validation in this repository covers Linux with NVIDIA CUDA and Ascend CANN.
-SenseNova U1.5 8-step LoRA V2 has been tested on one Ascend 310P3 device with
-CANN 8.5.0 at 1024 x 1024, 8 Euler steps, CFG 1 and shift 3. The older base-model
-50-step results remain historical comparisons. Model graph operations run on the NPU;
-Ascend 310P also supports BAGEL on a single card with Q8_0 understanding weights
-and F16 generation weights. CPU handles supporting work such as tokenization,
-scheduling, file I/O, and PNG encoding. See
-[`scripts/ascend/README.md`](scripts/ascend/README.md) for the validated Ascend
-layouts and launch scripts.
-
-## Quick start
-
-### Build
-
-You need Git, CMake 3.21 or newer, a C++17 compiler, and Python for model
-conversion. The CUDA build also needs the CUDA toolkit.
-
-From the repository root, initialize the pinned engines and build:
-
-```sh
-git submodule update --init third_party/llama.cpp third_party/stable-diffusion.cpp
-python scripts/apply-patches.py
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DSD_CUDA=ON
+```bash
+git submodule update --init --checkout -- third_party/llama.cpp third_party/stable-diffusion.cpp
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j 8
 ```
 
-For Ascend 310P, build the supplied CANN image and compile with both engines
-using the CANN backend:
+CUDA 构建加上 `-DGGML_CUDA=ON -DSD_CUDA=ON`。使用昇腾时，按对应指南构建和运行。
 
-```sh
-./docker/rebuild-runtime.sh --download
-docker run --rm --security-opt seccomp=unconfined \
-  --user "$(id -u):$(id -g)" -v "$PWD:/workspace/umm" \
-  umm-cann:8.5.0-mvp bash -lc '
-    cmake -S . -B build-cann -DCMAKE_BUILD_TYPE=Release \
-      -DGGML_CANN=ON -DSOC_TYPE=Ascend310P3
-    cmake --build build-cann -j 8
-  '
-```
+- [本地 310P 部署](scripts/ascend/README.md)
+- [远端 910B RPC 部署和 JSONL 调用](scripts/rpc/README.md)
 
-The pinned runtime, offline backup/restore commands and image protection container
-are documented in [`docker/README.runtime.md`](docker/README.runtime.md).
-This image contains the C++ toolchain and runtime; model conversion dependencies
-are installed separately as described below.
+已有模型包时，直接将其目录传给下文示例。转换模型时，先安装 Python 依赖。以 SenseNova U1.5 8 步 V2 为例：
 
-### Prepare a model package
-
-`convert-model.py` accepts an official U1.5 or BAGEL checkpoint and creates the
-self-contained directory consumed by `umm-cli`.
-
-Install the converter dependencies once:
-
-```sh
+```bash
 python -m pip install -r third_party/llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
-```
-
-Convert a checkpoint with:
-
-```sh
-# SenseNova U1.5 on Ascend 310P
-python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1 \
-  --outtype q8_0 --generation-outtype f16
-
-# Ascend 310P: Q8 understanding and FP16 generation, including image understanding weights
-python scripts/convert-model.py /path/to/official-u1.5 --output /path/to/u1-310p \
-  --outtype q8_0 --generation-outtype f16
-
-# BAGEL-7B-MoT
-python scripts/convert-model.py /path/to/BAGEL-7B-MoT --output /path/to/bagel
-```
-
-The official `SenseNova-U1.5-8B-MoT-LoRA-8step-V2` adapter is fused into the
-generation weights while converting a released `SenseNova-U1.5-8B-MoT` base
-checkpoint. It is not compatible with the Preview checkpoint:
-
-```sh
 python scripts/convert-model.py /path/to/SenseNova-U1.5-8B-MoT \
-  --output /path/to/u1.5-lora-8step-v2 \
-  --outtype q8_0 --generation-outtype f16 \
+  --output /path/to/u1.5-v2 --outtype q8_0 --generation-outtype f16 \
   --lora /path/to/SenseNova-U1.5-8B-MoT-LoRA-8step-V2.safetensors
 ```
 
-`--lora-strength` scales the merged delta and defaults to `1.0`. The converter
-checks all adapter targets before writing the package, and records the merged
-adapter filename and strength in `model.json`; inference does not need the
-adapter file afterwards.
-If a U1.5 UMM package from the same base checkpoint already exists, add
-`--reuse-understanding-from /path/to/existing-package` and
-`--expected-understanding-sha256 SHA256` to hard-link its `understanding.gguf`
-without storing a second copy. Obtain the expected digest from a trusted
-record and verify it against the existing file; the converter also checks the
-GGUF architecture and the requested understanding weight type.
+使用正式发布的基础检查点。转换脚本也支持 BAGEL，可运行 `python scripts/convert-model.py --help` 查看参数。
 
-The resulting package contains a `model.json` manifest and model-family-specific
-components:
+## 快速开始
 
-- U1: `understanding.gguf` and `generation.gguf`. The generation file also
-  carries U1's native understanding vision encoder.
-- BAGEL: `understanding.gguf`, `generation.gguf`, `vision.gguf`, and
-  `vae.safetensors`.
+### 命令行调用
 
-Other package rules:
+```bash
+# 文本生成
+build/bin/umm-cli --model /path/to/u1.5-v2 --mode text \
+  --prompt '用一句话介绍月球。' --max-tokens 64
 
-- Understanding weights default to BF16; use `--outtype f16`, `f32`, or `q8_0`
-  to change that component's format.
-- Generation weights retain their source dtype and values unless
-  `--generation-outtype f16` or `f32` is specified. Ascend 310P needs F16 or
-  F32 weights for its CANN MatMul path; F16 uses less device memory.
-- Reconvert older U1 packages whose `generation.gguf` lacks the four
-  `vision_model.embeddings` tensors. Image understanding requires them.
-- Tokenizer data is embedded in `understanding.gguf`.
-- The converter leaves the source checkpoint untouched, refuses to overwrite an
-  existing output directory, and needs enough free space for the completed
-  package beside the source checkpoint.
+# 图像理解
+build/bin/umm-cli --model /path/to/u1.5-v2 --mode understand \
+  --input photo.png --prompt '这张图里有什么？'
 
-### Generate text
+# 文生图，使用 U1.5 V2 的 8 步配置
+build/bin/umm-cli --model /path/to/u1.5-v2 --mode image \
+  --prompt '白色背景上的红色立方体' --output cube.png \
+  --width 1024 --height 1024 --steps 8 --cfg 1 --shift 3 --seed 42
 
-```sh
-build/bin/umm-cli --model /path/to/u1.5-lora-8step-v2 \
-  --mode text --prompt 'What is 2 + 3?'
+# 远端 910B，先按部署指南启动 worker 和 SSH 隧道
+build-rpc-client/bin/umm-cli --model /path/to/u1.5-v2 --mode text \
+  --execution-policy remote_910b --rpc-endpoint 127.0.0.1:50052 \
+  --prompt '用一句话介绍月球。' --max-tokens 64
 ```
 
-### Generate an image
+| 参数 | 用途 |
+| --- | --- |
+| `--model`、`--prompt` | 模型包目录和提示词 |
+| `--mode` | 默认 `text`。可选 `image`、`understand`、`edit`、`interleave`，以及对应的 `think-image`、`think-understand`、`think-edit`、`think-interleave` |
+| `--input`、`--output` | 理解和编辑使用输入图像。生图和编辑使用输出文件，图文交错生成使用输出文件名前缀 |
+| `--max-tokens`、`--max-images` | 文本 token 上限、图文交错生成的图片上限 |
+| `--width`、`--height`、`--steps`、`--cfg`、`--shift`、`--seed` | 生成尺寸、步数、引导强度、采样偏移和种子 |
+| `--execution-policy` | `local_310p` 固定使用本地 310P，`remote_910b` 固定使用远端 910B，`random` 在两端切分理解图，视觉编码和扩散在本地执行 |
+| `--local-device`、`--rpc-endpoint` | 本地设备名（默认 `CANN0`）和远端 `HOST:PORT`。远端和随机策略需要 RPC 地址 |
+| `--policy-seed`、`--policy-cuts` | 随机策略的放置种子和每张理解图的切分点数，默认分别为 `0` 和 `1` |
+| `--n-ctx`、`--n-batch`、`--n-ubatch` | 上下文、批次和微批次的 token 容量 |
 
-```sh
-build/bin/umm-cli --model /path/to/u1.5-lora-8step-v2 --mode image \
-  --prompt 'a red cube on a white background' --output cube.png \
-  --width 1024 --height 1024 --steps 8 --cfg 1 --shift 3
-```
+完整参数见 `build/bin/umm-cli --help`。
 
-On one Ascend 310P device, select the same CANN backend for both components:
+### HTTP 服务调用
 
-```sh
-mkdir -p outputs
-docker run --rm --security-opt seccomp=unconfined \
-  --device /dev/davinci2 --device /dev/davinci_manager \
-  --device /dev/hisi_hdc --device /dev/devmm_svm \
-  -e GGML_SCHED_STRICT_ACCEL=1 \
-  -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
-  -v "$PWD/build-cann-rebase/bin:/usr/local/lib/umm:ro" \
-  -v /path/to/u1.5-lora-8step-v2:/model:ro -v "$PWD/outputs:/output" \
-  umm-cann:8.5.0-mvp bash -lc '
-    export LD_LIBRARY_PATH=/usr/local/lib/umm:${LD_LIBRARY_PATH:-}
-    /usr/local/lib/umm/umm-cli --model /model --mode image \
-      --prompt "a red cube on a white background" --output /output/cube.png \
-      --understanding-backend CANN0 --generation-backend CANN0 \
-      --generation-max-vram CANN0=40 \
-      --n-ctx 2048 --n-batch 512 --n-ubatch 256 \
-      --width 1024 --height 1024 \
-      --steps 8 --cfg 1 --shift 3
-  '
-```
+先按 [310P 部署指南](scripts/ascend/README.md) 构建并[进入映射了单卡的容器](scripts/ascend/README.md#直接使用容器)，再启动服务。示例使用测试密钥。
 
-Replace `/dev/davinci2` with the physical device to use; it appears as CANN0
-inside the container. The V2 package uses Q8 understanding and F16 generation
-weights on one card.
-
-When both U1.5 components use the same CANN device, UMM uses a 2048-token
-understanding context to keep both sets of weights resident. Image-understanding
-requests with longer inputs must explicitly increase `--n-ctx` and the image
-microbatch capacity within the available device memory.
-
-For a 2048 x 2048 V2 run, retain the 8-step settings and change dimensions:
-
-```sh
---width 2048 --height 2048 --steps 8 --cfg 1 --shift 3 --seed 42
-```
-
-### Generate interleaved text and images
-
-SenseNova U1.5 can continue writing after each generated image. The current
-single-context path requires CFG 1. The default 512 × 512 size has 256 spatial
-tokens and is the validated functional test size; larger sizes require enough
-remaining understanding context. Use the distilled LoRA package with 8
-denoising steps in the CANN container:
-
-```sh
-mkdir -p outputs
-docker run --rm --security-opt seccomp=unconfined \
-  --device /dev/davinci2 --device /dev/davinci_manager \
-  --device /dev/hisi_hdc --device /dev/devmm_svm \
-  -e GGML_SCHED_STRICT_ACCEL=1 \
-  -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
-  -v "$PWD/build-cann/bin:/usr/local/lib/umm:ro" \
-  -v /path/to/u1.5-lora-8step-v2:/model:ro -v "$PWD/outputs:/output" \
-  umm-cann:8.5.0-mvp bash -lc '
-    export LD_LIBRARY_PATH=/usr/local/lib/umm:${LD_LIBRARY_PATH:-}
-    /usr/local/lib/umm/umm-cli --model /model --mode interleave \
-      --prompt "Write a short illustrated guide to growing a tomato plant." \
-      --output /output/tomato-guide \
-      --understanding-backend CANN0 --generation-backend CANN0 \
-      --generation-max-vram CANN0=40 --width 512 --height 512 \
-      --steps 8 --cfg 1 --shift 3 --max-images 2 --max-tokens 256
-  '
-```
-
-This writes `outputs/tomato-guide.txt` with `<image>` placeholders and one PNG
-per generated image. The number of images depends on the model response;
-`--max-images` is an upper bound. Replace `/dev/davinci2` with the physical
-device to use.
-
-### Reason, then generate an image
-
-```sh
-build/bin/umm-cli --model /path/to/u1 --mode think-image \
-  --prompt 'Design a clear illustration of the water cycle.' --output water-cycle.png
-```
-
-Image commands write a PNG and a companion `.png.json` file containing generation
-settings, reasoning, and tokens. The generic CLI defaults are 2048 × 2048,
-50 Euler steps, guidance 4, flow shift 3, and seed 42. For U1.5 LoRA V2,
-explicitly use `--steps 8 --cfg 1 --shift 3`; the Ascend U1.5 scripts set these
-values by default. Use `--width`, `--height`, `--steps`, `--cfg`,
-`--shift`, and `--seed` to adjust them; dimensions must be divisible by 32.
-Run `build/bin/umm-cli --help` for all options.
-
-Model-specific defaults:
-
-- U1 image generation defaults to 2048 × 2048, with dimensions divisible by 32.
-- BAGEL image generation defaults to 1024 × 1024, with dimensions divisible by 16
-  and a maximum size of 1024 × 1024.
-- `--vae-tiling 1` bounds VAE activation memory by decoding overlapping tiles.
-  `--vae-tile-size` is expressed in latent pixels and `--vae-tile-overlap` is a
-  ratio in `[0, 1)`. This is recommended for 1024 × 1024 BAGEL output.
-- For editing, omitting `--width` and `--height` preserves the prepared input
-  dimensions. BAGEL also supports `--image-cfg`, which defaults to 1.5.
-- Text and image modes share the same CLI format. Interleaved generation is
-  currently specific to SenseNova U1.5.
-
-### HTTP service and runtime metrics
-
-`umm-server` shares the persistent execution layer with `umm-session`. Each
-process runs one inference at a time; concurrent inference requests receive 429.
-Health and metrics queries remain available during inference.
-
-```sh
+```bash
 export UMM_API_KEY=local-test-key
-build/bin/umm-server --model /path/to/package \
-  --understanding-backend CANN0 --generation-backend CANN0 \
-  --n-ctx 8192 --n-batch 4096 --n-ubatch 4096 \
-  --steps 8 --cfg 1 --shift 3 --port 8080 --api-key-env UMM_API_KEY \
-  --request-log /absolute/path/requests.jsonl \
-  --system-samples /absolute/path/samples.jsonl
+build-static-310p/bin/umm-server --model /model \
+  --execution-policy local_310p --local-device CANN0 \
+  --host 127.0.0.1 --port 8080 --served-model-name u15 \
+  --api-key-env UMM_API_KEY --steps 8 --cfg 1 --shift 3
 ```
 
-The default model alias is `u15` (`--served-model-name` overrides it). Routes:
+在另一个终端发起请求。
 
-- `POST /v1/chat/completions`: one user message, text or ordered text/image
-  content, PNG/JPEG base64 data URLs, nonstreaming greedy decoding. Supports
-  `max_completion_tokens` or `max_tokens` and `temperature=0`.
-- `POST /v1/images/generations`: `n=1`, PNG `b64_json`, sizes up to 2048 per
-  dimension in multiples of 32; `umm_options` accepts seed, steps, cfg and shift.
-- `GET /v1/models`, `/health`, `/ready`, `/umm/info` and `/metrics`.
+```bash
+# 文本生成
+curl -fsS http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Authorization: Bearer local-test-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"u15","messages":[{"role":"user","content":"用一句话介绍月球。"}],"max_tokens":64,"temperature":0}'
 
-Unsupported parameters return an input error. The listener defaults to localhost.
-Component SHA256 hashes are computed before listening; `--hash-model 0` skips
-component hashing. Use separate task capacity profiles for large multimodal
-prefill and image generation. Configure OpenAI clients with `max_retries=0`.
-
-`/metrics` exports Prometheus counters, gauges and histograms with seconds, bytes
-and utilization ratios. JSONL responses include `system_metrics`; HTTP detail is
-saved in the request log and joined using `X-Request-ID`. Default monitoring
-samples host RSS, single-visible-NPU process memory and device utilization every
-two seconds. CANN builds with the optional transfer extension also report explicit
-H2D/D2H/D2D submissions. These counters describe runtime copies, rather than
-hardware bus traffic. Missing samples retain availability/coverage information;
-sampling errors allow inference to continue. `--monitoring 0` disables monitoring.
-`umm-session --metrics-port PORT` enables the same read-only exporter alongside
-JSONL. A disconnected client leaves submitted computation running to completion.
-
-### Persistent structured session
-
-`umm-session` loads a model package once and exchanges newline-delimited JSON on
-stdin/stdout (`umm-session/v1`). It sends a `ready` record, then one `result`
-per request. Backend logs go to stderr. For example:
-
-`ready.runtime_identity` records explicitly selected backend devices, GGUF
-tensor type counts, merged LoRA metadata, scheduling settings, and the build
-commits and dirty flags for UMM and both engines. Revisions refresh on each
-build. Automatic backend selection and non-GGUF precision are reported as
-unavailable; launchers can provide the physical device label through
-`UMM_PHYSICAL_DEVICE`.
-
-```sh
-build/bin/umm-session --model /path/to/package --understanding-backend CANN0 \
-  --generation-backend CANN0 --n-ctx 2048 --n-batch 512 --n-ubatch 256
+# 文生图，响应的 data[0].b64_json 是 Base64 编码的 PNG
+curl -fsS http://127.0.0.1:8080/v1/images/generations \
+  -H 'Authorization: Bearer local-test-key' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"u15","prompt":"白色背景上的红色立方体","size":"1024x1024","n":1,"response_format":"b64_json","umm_options":{"seed":42}}'
 ```
 
-```json
-{"case_id":"example-1","task_class":"image_generation","content":[{"type":"text","value":"A red cube"}],"params":{"width":1024,"height":1024,"seed":7},"output_path":"/absolute/path/cube.png"}
-```
+| 参数 | 用途 |
+| --- | --- |
+| `--host`、`--port`、`--served-model-name` | 监听地址、端口和请求中的模型别名。默认别名为 `u15` |
+| `--api-key-env` | 保存密钥的环境变量名。启用后，请求带上 `Authorization: Bearer <密钥>` |
+| `messages` | 对话接口接收一条 `user` 消息。可使用纯文本，或由文本与 PNG/JPEG Base64 数据 URL 组成的图文序列 |
+| `max_tokens` 或 `max_completion_tokens` | 对话输出上限，二选一，默认 256。支持 `temperature: 0` 和 `stream: false` |
+| `prompt`、`size`、`n` | 生图提示词、尺寸和张数。HTTP 尺寸默认 `1024x1024`，宽高为 32 的倍数且每边最多 2048，张数固定为 1 |
+| `umm_options` | 生图请求可指定 `seed`、`steps`、`cfg` 和 `shift` |
 
-`mixed_understanding` accepts one leading image item with an absolute `path`,
-followed by text items, plus `params.max_new_tokens`. Unsupported inputs return
-a per-case error; model loading errors return `fatal`. Diffusion settings such
-as `--steps`, `--cfg`, and `--shift` are session flags.
+每个服务进程同一时刻处理一条推理请求。可通过 `/health`、`/ready` 和 `/metrics` 查询运行状态。
 
-SenseNova U1 uses grouped image attention and mixed prefill by default: text and
-up to four complete image groups share each batch, within the configured
-batch/microbatch capacity. Only the final prompt logits are requested. Text
-embedding lookup stays on the weight backend; host memory assembles the mixed
-embeddings. U1 V cache uses contiguous rows automatically; other model families
-retain their own layout. These are fixed implementations, not runtime modes.
-The former `--u1-prefill-mode` and `--u1-v-cache-layout` options are removed.
-Actual choices are recorded in `ready.runtime_identity.policy` as
-`u1_prefill_mode` and `u1_v_cache_layout` (null for other families).
-CANN uses ordinary attention with FlashAttention disabled. Q8 NZ remains a
-separate backend layout choice because it has device/memory compatibility
-constraints. BAGEL retains its existing workflow.
+### C++ API 调用
 
-Understanding results include `prefill.batches` (kind, token count, cached
-input tokens, logits rows, elapsed milliseconds), aggregate call/logits counts,
-and a batching-independent FNV-1a fingerprint of input IDs and all position axes.
-`image_encoder`, `image_prefill`, `text_prefill_compute`, and `mixed_prefill`
-split encoder and LLM execution time. Mixed batch time includes text embedding
-lookup and assembly; its legacy `vision_encode` contains only image encoding.
-Detailed LLM timers synchronize each batch and include graph
-reservation and dispatch. Use the same instrumented binary for performance comparisons.
-The legacy `vision_encode` field measures the image insertion call: moving text
-boundaries outside that call changes its partition; compare the new detailed
-fields and end-to-end latency across modes. Graph reservation remains visible
-in stderr; `attention_mode_switches` counts actual per-image toggles, not reserves.
-
-## C++ API
-
-Use the same session interface for text and image generation:
+将程序链接到 CMake 目标 `umm`，包含 `session.h`。
 
 ```cpp
 #include "session.h"
+#include <iostream>
 
-umm::session session("/path/to/u1");
+int main() {
+    umm::session model("/path/to/u1.5-v2");
+    std::cout << model.text("用一句话介绍月球。", 64) << '\n';
 
-auto text = session.text("What is 2 + 3?");
-
-umm::image_options options;
-options.think = true;
-auto image = session.image("Design a clear illustration of the water cycle.", options);
-// image.rgb contains RGB pixels; image.reasoning contains the preceding reasoning.
+    umm::image_options options;
+    options.width = 1024;
+    options.height = 1024;
+    options.steps = 8;
+    options.guidance = 1.0f;
+    options.flow_shift = 3.0f;
+    options.seed = 42;
+    const auto image = model.image("白色背景上的红色立方体", options);
+    std::cout << image.width << " × " << image.height << '\n';
+}
 ```
 
-See [session.h](include/session.h) for the public interface and defaults.
+| 接口或参数 | 用途 |
+| --- | --- |
+| `umm::session(model)` | 加载模型包。构造函数也可指定理解、生成和视觉后端以及上下文、批次和微批次容量 |
+| `text(prompt, max_tokens)` | 返回生成文本，`max_tokens` 默认 256 |
+| `understand(image, prompt, max_tokens, think)` | 从 `image_input` 读取宽、高和 RGB 像素，返回图像理解结果 |
+| `image(prompt, options)`、`edit(image, prompt, options)` | 生成或编辑图像。用 `image_options` 指定尺寸、步数、引导强度、种子等，结果的 `rgb` 字段保存像素 |
+| `interleave(prompt, options, max_text_tokens, max_images)` | 返回文本和图像列表，适用于 SenseNova U1.5 |
 
-## Graph profiler
+完整签名及默认值见 [session.h](include/session.h)。
 
-Existing captures can be explored with the offline [Graph Atlas viewer](../utils/profiler-viewer/README.md): folded layers, operator dependencies, exact candidate boundaries and measured cost comparisons.
+## 工具
 
-The [profiler](tools/profiler/README.md) replays a model and representative workload
-on a device list, exporting real graphs, placement and synchronized host timings.
-The first collector supports SenseNova U1 with local 310P and existing CANN RPC
-workers. It automatically selects closed FFN candidates, captures real boundary
-inputs in a separate pass, and measures isolated compute and actual tensor-copy
-roundtrips on each device. Full-plan legality, kernel timings and validated
-scheduling decisions remain future work.
+- [计算图分析与校验](tools/profiler-cli/README.md)
+- [随机放置文本对照](tools/README.random-model-run.md)
+- [310P 镜像重建、备份和恢复](docker/README.runtime.md)

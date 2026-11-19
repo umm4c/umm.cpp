@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.21)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    message(FATAL_ERROR "Configure the UMM root to build the real profiler")
+endif()
+add_executable(umm-profiler main.cpp)
+target_include_directories(umm-profiler PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(umm-profiler PRIVATE umm-profiler-api)
