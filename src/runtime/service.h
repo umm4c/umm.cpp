@@ -1,6 +1,5 @@
 #pragma once
-#include "json.hpp"
-#include "session.h"
+#include "case-protocol.h"
 #include <future>
 #include <map>
 #include <memory>
@@ -8,12 +7,7 @@
 #include <string>
 
 namespace umm::runtime {
-using json = nlohmann::json;
-using options = std::map<std::string, std::string>;
-options parse_options(int argc, char ** argv);
-std::string option(const options &, const std::string &, const std::string & fallback = "");
-json runtime_identity(const std::string &, const options &, const std::string & secondary_backend = "");
-json run_case(session &, const json &, const options &, bool http = false);
+enum class request_source { jsonl, http };
 json transfer_snapshot();
 
 class system_monitor {
@@ -34,7 +28,7 @@ public:
     explicit service(options);
     ~service();
     const json & info() const;
-    std::optional<std::future<json>> submit(json request, bool http = false);
+    std::optional<std::future<json>> submit(json request, request_source source, case_runner run);
     std::string metrics() const;
     void reject(const std::string & reason);
     void http_completed(const std::string & id, const std::string & task, const std::string & status, double ms);

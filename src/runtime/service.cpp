@@ -1,12 +1,7 @@
-#include "runtime-support.h"
+#include "service.h"
 #include "scheduling/execution-policy.h"
-#include "inference/model-package.h"
-extern "C" {
-#include "sha256.h"
-}
-#include <array>
+#include "identity.h"
 #include <cstdlib>
-#include <iomanip>
 #include <atomic>
 #include <filesystem>
 #include <cmath>
@@ -35,26 +30,6 @@ std::string escape(const std::string & value) {
 }
 std::string label(const std::string & key, const std::string & value) {
     return key + "=\"" + escape(value) + "\"";
-}
-std::string file_hash(const std::string & path) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input)
-        throw std::runtime_error("Cannot hash model component");
-    sha256_t state;
-    sha256_init(&state);
-    std::array<unsigned char, 1024 * 1024> buffer;
-    while (input) {
-        input.read(reinterpret_cast<char *>(buffer.data()), buffer.size());
-        sha256_update(&state, buffer.data(), size_t(input.gcount()));
-    }
-    if (!input.eof())
-        throw std::runtime_error("Model component hash read failed");
-    unsigned char bytes[32];
-    sha256_final(&state, bytes);
-    std::ostringstream result;
-    for (auto ch : bytes)
-        result << std::hex << std::setw(2) << std::setfill('0') << int(ch);
-    return result.str();
 }
 struct histogram {
     std::vector<uint64_t> counts = std::vector<uint64_t>(buckets.size(), 0);
@@ -121,7 +96,8 @@ struct service::impl {
     bool stopping = false, busy = false;
     struct job {
         json request;
-        bool http;
+        request_source source;
+        case_runner run;
         std::promise<json> result;
     };
     std::optional<job> pending;
@@ -161,7 +137,7 @@ struct service::impl {
         if (worker.joinable())
             worker.join();
     }
-    void record(const json & value, const std::string & task, bool http) {
+    void record(const json & value, const std::string & task, request_source source) {
         std::lock_guard<std::mutex> lock(stats_mutex);
         const auto status = value.value("status", "error");
         const auto labels = label("task", task) + "," + label("status", status);
@@ -171,9 +147,9 @@ struct service::impl {
                 if (!it.value().is_number())
                     continue;
                 const double seconds = it.value().get<double>() / 1000;
-                if (it.key() == "end_to_end" && !http) {
-                    stats.observe("umm_e2e_request_latency_seconds",
-                                  labels + "," + label("transport", http ? "http" : "jsonl"), seconds);
+                if (it.key() == "end_to_end" && source == request_source::jsonl) {
+                    stats.observe("umm_e2e_request_latency_seconds", labels + "," + label("transport", "jsonl"),
+                                  seconds);
                 } else if (it.key() == "end_to_end")
                     continue;
                 else if (it.key() == "engine")
@@ -225,18 +201,7 @@ struct service::impl {
                      {"runtime_identity", runtime_identity(model, args, schedule.secondary_backend)},
                      {"monitoring", monitor.snapshot()},
                      {"startup_transfer", transfer_snapshot()}};
-            ready["model_manifest_sha256"] = file_hash((std::filesystem::path(model) / "model.json").string());
-            if (const char * hash = std::getenv("UMM_MODEL_MANIFEST_SHA256")) {
-                if (ready["model_manifest_sha256"] != hash)
-                    throw std::runtime_error("Model manifest hash mismatch");
-            }
-            if (option(args, "--hash-model", "0") == "1") {
-                const auto hash_start = clock::now();
-                ready["model_component_sha256"] = json::object();
-                for (const auto & entry : resolve_model(model).components)
-                    ready["model_component_sha256"][entry.first] = file_hash(entry.second);
-                ready["startup_hash_ms"] = std::chrono::duration<double, std::milli>(clock::now() - hash_start).count();
-            }
+            add_model_hashes(ready, model, args);
             initialized.set_value();
             std::unique_lock<std::mutex> lock(mutex);
             while (true) {
@@ -248,17 +213,18 @@ struct service::impl {
                 lock.unlock();
                 try {
                     monitor.begin();
-                    auto value = run_case(engine, current.request, args, current.http);
+                    auto value = current.run(engine, current.request, args);
                     value["system_metrics"] = monitor.end();
                     value["request_id"] =
-                        current.http ? current.request.at("case_id")
-                                     : json("umm-" + std::to_string(getpid()) + "-" + std::to_string(++sequence));
+                        current.source == request_source::http
+                            ? current.request.at("case_id")
+                            : json("umm-" + std::to_string(getpid()) + "-" + std::to_string(++sequence));
                     if (current.request.contains("client_case_id"))
                         value["client_case_id"] = current.request["client_case_id"];
                     const auto task = current.request.value("task_class", "unknown");
                     const auto known = task == "text_generation" || task == "mixed_understanding" ||
                                        task == "multimodal_prefill" || task == "image_generation";
-                    record(value, known ? task : "unknown", current.http);
+                    record(value, known ? task : "unknown", current.source);
                     lock.lock();
                     busy = false;
                     lock.unlock();
@@ -298,11 +264,11 @@ service::~service() = default;
 const json & service::info() const {
     return state->ready;
 }
-std::optional<std::future<json>> service::submit(json request, bool http) {
+std::optional<std::future<json>> service::submit(json request, request_source source, case_runner run) {
     std::lock_guard<std::mutex> lock(state->mutex);
     if (state->busy || state->stopping)
         return std::nullopt;
-    state->pending.emplace(impl::job{std::move(request), http, {}});
+    state->pending.emplace(impl::job{std::move(request), source, run, {}});
     auto future = state->pending->result.get_future();
     state->busy = true;
     state->wake.notify_one();

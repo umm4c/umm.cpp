@@ -62,8 +62,10 @@ target_link_libraries(umm-cli PRIVATE umm umm-scheduling)
 
 # Persistent, structured interface for serial benchmark replay.
 find_package(Threads REQUIRED)
-add_library(umm-runtime STATIC src/runtime/request-runtime.cpp src/runtime/runtime-service.cpp
-    src/runtime/system-monitor.cpp src/runtime/runtime-http.cpp src/runtime/image-io.cpp)
+add_library(umm-runtime STATIC src/runtime/request-execution.cpp src/runtime/service.cpp
+    src/runtime/system-monitor.cpp src/runtime/http.cpp src/runtime/image-io.cpp
+    src/runtime/options.cpp src/runtime/identity.cpp
+    src/runtime/case-protocol.cpp src/runtime/jsonl.cpp)
 target_include_directories(umm-runtime PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"
     "${CMAKE_CURRENT_BINARY_DIR}/generated"

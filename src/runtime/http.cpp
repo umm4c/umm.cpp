@@ -1,4 +1,4 @@
-#include "runtime-support.h"
+#include "service.h"
 #include "httplib.h"
 #include <atomic>
 #include <thread>
@@ -228,7 +228,7 @@ int serve_http(service & runtime, const options & args) {
                 error(response, 400, "invalid_request", exc.what());
                 return;
             }
-            auto future = runtime.submit(normalized, true);
+            auto future = runtime.submit(normalized, request_source::http, run_inline_case);
             if (!future) {
                 runtime.reject("busy");
                 error(response, 429, "server_busy", "An inference request is already running");

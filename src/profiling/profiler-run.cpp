@@ -4,7 +4,8 @@
 #include "profiler-hierarchy.h"
 #include "profiler-graph-contract.h"
 #include <memory>
-#include "runtime/runtime-support.h"
+#include "runtime/case-protocol.h"
+#include "runtime/identity.h"
 #include "scheduling/execution-policy.h"
 #include "inference/model-package.h"
 #include "ggml-backend.h"
@@ -519,10 +520,10 @@ result profile(const request & input, bool operator_timing) {
                     batch->start(expected_graphs);
                 }
                 if (c.pass == "baseline")
-                    response = runtime::run_case(engine, item, options, true);
+                    response = runtime::run_inline_case(engine, item, options);
                 else {
                     observer_scope observation(c);
-                    response = runtime::run_case(engine, item, options, true);
+                    response = runtime::run_inline_case(engine, item, options);
                 }
                 if (c.remote_timing)
                     batch->finish(c, trace_start);

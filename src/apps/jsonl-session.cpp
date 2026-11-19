@@ -1,4 +1,5 @@
-#include "runtime/runtime-support.h"
+#include "runtime/service.h"
+#include "runtime/jsonl.h"
 #include <cstdio>
 #include <iostream>
 #include <unistd.h>
@@ -27,7 +28,7 @@ int main(int argc, char ** argv) {
             if (line.empty())
                 continue;
             try {
-                auto pending = runtime.submit(json::parse(line));
+                auto pending = runtime.submit(json::parse(line), request_source::jsonl, run_jsonl_case);
                 if (!pending)
                     throw std::runtime_error("Session is busy");
                 send(pending->get());
