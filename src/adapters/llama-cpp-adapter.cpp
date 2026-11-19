@@ -555,7 +555,7 @@ llama_token llama_cpp_adapter::greedy() const {
 
 // KV-prefix export/import ---------------------------------------------------
 
-prefix_view llama_cpp_adapter::prefix() const {
+kv_prefix llama_cpp_adapter::export_prefix() const {
     if (tokens_.empty()) {
         return {};
     }
@@ -571,10 +571,17 @@ prefix_view llama_cpp_adapter::prefix() const {
         }
     }
     const auto layers = cache->get_layer_ids();
-    prefix_view result;
+    // The device views and any packed V tensors live only through the host copy.
+    std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend(nullptr, ggml_backend_free);
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> descriptors(nullptr, ggml_free);
+    std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> storage(nullptr, ggml_backend_buffer_free);
+    std::vector<ggml_tensor *> device_keys;
+    std::vector<ggml_tensor *> device_values;
+    device_keys.reserve(layers.size());
+    device_values.reserve(layers.size());
     const size_t max_nodes = 6*layers.size() + 4;
-    result.descriptors.reset(ggml_init({ggml_tensor_overhead()*max_nodes + ggml_graph_overhead_custom(max_nodes, false), nullptr, true}));
-    if (!result.descriptors) {
+    descriptors.reset(ggml_init({ggml_tensor_overhead()*max_nodes + ggml_graph_overhead_custom(max_nodes, false), nullptr, true}));
+    if (!descriptors) {
         throw std::runtime_error("Could not allocate prefix descriptors");
     }
     llama_kv_cache::slot_info slots{};
@@ -582,12 +589,12 @@ prefix_view llama_cpp_adapter::prefix() const {
     ggml_cgraph * packing = nullptr;
     ggml_backend_dev_t packing_device = nullptr;
     for (uint32_t layer : layers) {
-        auto * key = cache->get_k(result.descriptors.get(), layer, tokens_.size(), slots);
-        auto * value = cache->get_v(result.descriptors.get(), layer, tokens_.size(), slots);
+        auto * key = cache->get_k(descriptors.get(), layer, tokens_.size(), slots);
+        auto * value = cache->get_v(descriptors.get(), layer, tokens_.size(), slots);
         ggml_backend_view_init(key);
         ggml_backend_view_init(value);
         if (value->nb[1] > value->nb[2]) {
-            value = ggml_permute(result.descriptors.get(), value, 2, 1, 0, 3);
+            value = ggml_permute(descriptors.get(), value, 2, 1, 0, 3);
             ggml_backend_view_init(value);
         }
         if (!ggml_are_same_shape(key, value) || !ggml_is_contiguous(key)) {
@@ -602,68 +609,43 @@ prefix_view llama_cpp_adapter::prefix() const {
                 throw std::runtime_error("Could not identify prefix packing device");
             }
             if (!packing) {
-                packing = ggml_new_graph_custom(result.descriptors.get(), max_nodes, false);
+                packing = ggml_new_graph_custom(descriptors.get(), max_nodes, false);
                 packing_device = device;
             } else if (packing_device != device) {
                 throw std::runtime_error("Packing transposed values requires one cache device");
             }
-            value = ggml_cont(result.descriptors.get(), value);
+            value = ggml_cont(descriptors.get(), value);
             ggml_build_forward_expand(packing, value);
         }
-        result.keys.push_back(key);
-        result.values.push_back(value);
+        device_keys.push_back(key);
+        device_values.push_back(value);
     }
     if (packing) {
         // Ordinary attention transposes V. Pack it once at the phase boundary.
-        std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend(
-                ggml_backend_dev_init(packing_device, nullptr), ggml_backend_free);
+        backend.reset(ggml_backend_dev_init(packing_device, nullptr));
         if (!backend) {
             throw std::runtime_error("Could not initialize prefix packing backend");
         }
-        result.storage.reset(ggml_backend_alloc_ctx_tensors(result.descriptors.get(), backend.get()));
-        if (!result.storage || ggml_backend_graph_compute(backend.get(), packing) != GGML_STATUS_SUCCESS) {
+        storage.reset(ggml_backend_alloc_ctx_tensors(descriptors.get(), backend.get()));
+        if (!storage || ggml_backend_graph_compute(backend.get(), packing) != GGML_STATUS_SUCCESS) {
             throw std::runtime_error("Could not pack prefix values");
         }
         ggml_backend_synchronize(backend.get());
     }
 
-    const auto device_keys = std::move(result.keys);
-    const auto device_values = std::move(result.values);
-    result.host_descriptors.reset(ggml_init({2*layers.size()*ggml_tensor_overhead(), nullptr, true}));
-    if (!result.host_descriptors) {
-        throw std::runtime_error("Could not allocate host prefix descriptors");
-    }
-    result.keys.reserve(layers.size());
-    result.values.reserve(layers.size());
-    for (size_t i = 0; i < layers.size(); ++i) {
-        result.keys.push_back(ggml_dup_tensor(result.host_descriptors.get(), device_keys[i]));
-        result.values.push_back(ggml_dup_tensor(result.host_descriptors.get(), device_values[i]));
-    }
-    result.host_buffer.reset(ggml_backend_alloc_ctx_tensors_from_buft(
-        result.host_descriptors.get(), ggml_backend_cpu_buffer_type()));
-    if (!result.host_buffer) {
-        throw std::runtime_error("Could not allocate host prefix buffer");
-    }
-    for (size_t i = 0; i < layers.size(); ++i) {
-        for (const auto pair : {std::pair{device_keys[i], result.keys[i]},
-                                std::pair{device_values[i], result.values[i]}}) {
-            std::vector<uint8_t> bytes(ggml_nbytes(pair.first));
-            ggml_backend_tensor_get(pair.first, bytes.data(), 0, bytes.size());
-            ggml_backend_tensor_set(pair.second, bytes.data(), 0, bytes.size());
-        }
-    }
-    return result;
+    return kv_prefix::copy_to_host(tokens_, positions_, device_keys, device_values);
 }
 
-void llama_cpp_adapter::import_prefix(const std::vector<llama_token> & tokens, const std::vector<llama_pos> & positions,
-                                  const std::vector<ggml_tensor *> & keys, const std::vector<ggml_tensor *> & values) {
+void llama_cpp_adapter::import_prefix(const kv_prefix & prefix) {
+    const auto & tokens = prefix.tokens;
+    const auto & positions = prefix.positions;
     if (tokens.size() != positions.size() || tokens.empty() || positions.back() >= INT32_MAX) {
         throw std::invalid_argument("Invalid external prefix metadata");
     }
     auto * cache = dynamic_cast<llama_kv_cache *>(context_->get_memory());
     if (!cache) throw std::runtime_error("Understanding context cannot import attention prefixes");
     reset();
-    if (!cache->import_prefix(context_.get(), 0, positions, keys, values)) {
+    if (!cache->import_prefix(context_.get(), 0, positions, prefix.keys, prefix.values)) {
         throw std::runtime_error("Could not import attention prefix");
     }
     tokens_ = tokens;

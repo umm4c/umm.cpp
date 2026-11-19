@@ -67,42 +67,6 @@ int context_size_for_single_cann_u1(model_family family, const std::string & und
     return 2048;
 }
 
-prefix_view stage_prefix_to_host(const std::vector<ggml_tensor *> & keys,
-                                 const std::vector<ggml_tensor *> & values) {
-    if (keys.empty() || keys.size() != values.size()) {
-        throw std::invalid_argument("Invalid prefix tensors");
-    }
-    prefix_view result;
-    result.descriptors.reset(ggml_init({2*keys.size()*ggml_tensor_overhead(), nullptr, true}));
-    if (!result.descriptors) {
-        throw std::runtime_error("Could not allocate prefix staging descriptors");
-    }
-    result.keys.reserve(keys.size());
-    result.values.reserve(values.size());
-    for (size_t i = 0; i < keys.size(); ++i) {
-        if (!keys[i] || !values[i] || !keys[i]->buffer || !values[i]->buffer ||
-            !ggml_is_contiguous(keys[i]) || !ggml_is_contiguous(values[i])) {
-            throw std::runtime_error("External prefix tensors must be contiguous backend tensors");
-        }
-        result.keys.push_back(ggml_dup_tensor(result.descriptors.get(), keys[i]));
-        result.values.push_back(ggml_dup_tensor(result.descriptors.get(), values[i]));
-    }
-    result.storage.reset(ggml_backend_alloc_ctx_tensors_from_buft(
-        result.descriptors.get(), ggml_backend_cpu_buffer_type()));
-    if (!result.storage) {
-        throw std::runtime_error("Could not allocate prefix staging buffer");
-    }
-    for (size_t i = 0; i < keys.size(); ++i) {
-        for (const auto pair : {std::pair{keys[i], result.keys[i]},
-                                std::pair{values[i], result.values[i]}}) {
-            std::vector<uint8_t> bytes(ggml_nbytes(pair.first));
-            ggml_backend_tensor_get(pair.first, bytes.data(), 0, bytes.size());
-            ggml_backend_tensor_set(pair.second, bytes.data(), 0, bytes.size());
-        }
-    }
-    return result;
-}
-
 std::vector<llama_pos> image_prefix_positions(const sd_kv_prefix_t & prefix) {
     if (prefix.positions) {
         return {prefix.positions, prefix.positions + prefix.token_count};
@@ -267,10 +231,9 @@ void session::impl::append_vision_image(const image_input & image) {
 }
 
 void session::impl::transfer_prefix(conditioning_slot slot) {
-    const auto prefix = language_model.prefix();
-    const auto & tokens = language_model.tokens();
-    const sd_kv_prefix_t data{tokens.data(), tokens.size(), prefix.keys.data(), prefix.values.data(),
-                              prefix.keys.size(), language_model.positions().data()};
+    const auto prefix = language_model.export_prefix();
+    const sd_kv_prefix_t data{prefix.tokens.data(), prefix.tokens.size(), prefix.keys.data(), prefix.values.data(),
+                              prefix.keys.size(), prefix.positions.data()};
     if (!set_kv_prefix(image_engine.get(), slot, data)) {
         throw std::runtime_error("Could not transfer understanding prefix to generation");
     }
@@ -292,14 +255,12 @@ void session::impl::append_latent_image(const image_input & image, int64_t seed)
 }
 
 void session::impl::import_image_prefix(const sd_kv_prefix_t & prefix) {
-    const auto positions = image_prefix_positions(prefix);
+    auto positions = image_prefix_positions(prefix);
     const std::vector<ggml_tensor *> keys(prefix.keys, prefix.keys + prefix.layer_count);
     const std::vector<ggml_tensor *> values(prefix.values, prefix.values + prefix.layer_count);
-    auto staged = stage_prefix_to_host(keys, values);
-    language_model.import_prefix({prefix.token_ids, prefix.token_ids + prefix.token_count},
-                              positions,
-                              staged.keys,
-                              staged.values);
+    const auto staged = kv_prefix::copy_to_host({prefix.token_ids, prefix.token_ids + prefix.token_count},
+                                                 std::move(positions), keys, values);
+    language_model.import_prefix(staged);
 }
 
 workflow_context session::impl::workflow_context_for_request() {

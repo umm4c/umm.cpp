@@ -29,7 +29,7 @@ target_include_directories(stable-diffusion PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}
 add_subdirectory(src/scheduling)
 
 # UMM llama.cpp integration ---------------------------------------------------
-add_library(llama.cpp src/adapters/llama-cpp-adapter.cpp src/inference/model-registry.cpp)
+add_library(llama.cpp src/adapters/llama-cpp-adapter.cpp src/adapters/kv-prefix.cpp src/inference/model-registry.cpp)
 target_include_directories(llama.cpp PUBLIC include PRIVATE src "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/src")
 target_link_libraries(llama.cpp PUBLIC llama PRIVATE umm-scheduling)
 

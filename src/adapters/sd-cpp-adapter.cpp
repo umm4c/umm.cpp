@@ -180,13 +180,13 @@ std::vector<float> encode_u1_image_with_diffusion(sd_ctx_t * context, const imag
     float * values = nullptr;
     size_t token_count = 0;
     size_t embedding_dim = 0;
-    if (!sd_encode_sensenova_u1_image(context, &input, &values, &token_count, &embedding_dim) ||
-        values == nullptr || token_count == 0 || embedding_dim == 0) {
+    const bool encoded = sd_encode_sensenova_u1_image(context, &input, &values, &token_count, &embedding_dim);
+    const std::unique_ptr<float, decltype(&sd_free_buffer)> buffer(values, sd_free_buffer);
+    if (!encoded || !buffer || token_count == 0 || embedding_dim == 0 ||
+        token_count > std::vector<float>().max_size() / embedding_dim) {
         throw std::runtime_error("SenseNova U1 image encoding failed");
     }
-    std::vector<float> result(values, values + token_count * embedding_dim);
-    sd_free_buffer(values);
-    return result;
+    return {buffer.get(), buffer.get() + token_count * embedding_dim};
 }
 
 }

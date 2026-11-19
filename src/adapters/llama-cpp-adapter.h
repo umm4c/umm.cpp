@@ -1,5 +1,6 @@
 #pragma once
 
+#include "kv-prefix.h"
 #include "model-registry.h"
 #include "request-metrics.h"
 #include "scheduling/execution-policy.h"
@@ -13,17 +14,6 @@
 #include <vector>
 
 namespace umm {
-
-// Non-owning views into llama.cpp's KV cache. The descriptor/storage handles
-// keep the views alive until the next reset/decode or destruction.
-struct prefix_view {
-    std::unique_ptr<ggml_context, decltype(&ggml_free)> descriptors{nullptr, ggml_free};
-    std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> storage{nullptr, ggml_backend_buffer_free};
-    std::unique_ptr<ggml_context, decltype(&ggml_free)> host_descriptors{nullptr, ggml_free};
-    std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> host_buffer{nullptr, ggml_backend_buffer_free};
-    std::vector<ggml_tensor *> keys;
-    std::vector<ggml_tensor *> values;
-};
 
 struct u1_prefill_segment {
     std::vector<llama_token> tokens;
@@ -74,9 +64,8 @@ public:
     ggml_tensor * tensor(const char * name) const;
     const std::string & architecture() const { return architecture_; }
     model_family family() const { return family_; }
-    prefix_view prefix() const;
-    void import_prefix(const std::vector<llama_token> & tokens, const std::vector<llama_pos> & positions,
-                       const std::vector<ggml_tensor *> & keys, const std::vector<ggml_tensor *> & values);
+    kv_prefix export_prefix() const;
+    void import_prefix(const kv_prefix & prefix);
     const std::vector<llama_token> & tokens() const { return tokens_; }
     const std::vector<llama_pos> & positions() const { return positions_; }
     size_t context_capacity() const { return llama_n_ctx(context_.get()); }
