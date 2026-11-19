@@ -1,4 +1,4 @@
-#include "profiling/profiler-graph-contract.h"
+#include "profiling/graph-contract.h"
 #include "ggml-cpu.h"
 #include "ggml-alloc.h"
 #include "../../third_party/llama.cpp/common/base64.hpp"

@@ -1,5 +1,5 @@
-#include "profiler-annotations.h"
-#include "profiler-utils.h"
+#include "timing-annotations.h"
+#include "hash-and-statistics.h"
 
 #include <cmath>
 #include <map>

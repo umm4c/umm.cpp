@@ -1,6 +1,6 @@
 #pragma once
 #include "ggml-backend.h"
-#include "profiler-utils.h"
+#include "hash-and-statistics.h"
 #include "json.hpp"
 #include <array>
 #include <cstring>

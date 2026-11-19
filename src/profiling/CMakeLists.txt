@@ -1,8 +1,10 @@
 add_library(umm-profiler-api
-    profiler.cpp
-    profiler-run.cpp
-    profiler-annotations.cpp
-    profiler-hierarchy.cpp)
+    request-and-result.cpp
+    workload-run.cpp
+    graph-capture.cpp
+    rpc-timing-batch.cpp
+    timing-annotations.cpp
+    hierarchy-timing.cpp)
 target_compile_features(umm-profiler-api PUBLIC cxx_std_17)
 target_include_directories(umm-profiler-api
     PUBLIC "${PROJECT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"

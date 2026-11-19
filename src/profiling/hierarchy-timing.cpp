@@ -1,4 +1,4 @@
-#include "profiler-hierarchy.h"
+#include "hierarchy-timing.h"
 
 #include <cmath>
 #include <cstring>

@@ -1,5 +1,5 @@
 #pragma once
-#include "profiler-graph-description.h"
+#include "graph-description.h"
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>

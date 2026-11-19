@@ -1,8 +1,9 @@
 #include "profiler.h"
 #include "inference/profile-context.h"
-#include "profiler-annotations.h"
-#include "profiler-hierarchy.h"
-#include "profiler-graph-contract.h"
+#include "timing-annotations.h"
+#include "graph-capture.h"
+#include "rpc-timing-batch.h"
+#include "hash-and-statistics.h"
 #include <memory>
 #include "runtime/case-protocol.h"
 #include "runtime/identity.h"
@@ -10,9 +11,6 @@
 #include "inference/model-package.h"
 #include "ggml-backend.h"
 #include "../../third_party/llama.cpp/common/base64.hpp"
-#ifdef GGML_USE_RPC
-#include "ggml-rpc.h"
-#endif
 extern "C" {
 #include "sha256.h"
 }
@@ -37,7 +35,10 @@ namespace {
 double elapsed(clock::time_point start) {
     return std::chrono::duration<double, std::milli>(clock::now() - start).count();
 }
+using detail::capture;
 using detail::hash;
+using detail::observer_scope;
+using detail::rpc_batch;
 std::string read(const std::filesystem::path & path) {
     std::ifstream file(path, std::ios::binary);
     if (!file)
@@ -87,273 +88,7 @@ struct environment {
         }
     }
 };
-struct capture {
-    result & output;
-    std::string device_id, case_id, requested_backend, error;
-    std::string pass = "structure";
-    int replay = 0;
-    bool warmup = false;
-    bool remote_timing = false;
-    bool remote = false;
-    detail::hierarchy_capture hierarchy;
-    clock::time_point origin = clock::now();
-    struct frame {
-        std::string graph_id, event_id, parent;
-        clock::time_point start;
-        double export_ms;
-    };
-    std::vector<frame> stack;
-    std::set<std::string> seen;
-    struct binding {
-        std::string id, phase;
-        std::unique_ptr<graph_contract> contract;
-        bool scheduler = false;
-    };
-    std::map<std::string, std::vector<binding>> bindings;
-    size_t execution_cursor = 0;
-    size_t event_number = 0;
-    std::map<std::string, std::vector<double>> samples;
-    bool fine() const { return pass == "layer" || pass == "block" || pass == "operator"; }
-    bool observe_fine(ggml_backend_t backend, ggml_backend_sched_t sched, ggml_cgraph * graph, bool completed) {
-        if (!completed) {
-            const auto & binding = bindings.at(case_id).at(execution_cursor++);
-            if (binding.phase != current_phase.phase) {
-                throw std::runtime_error("Execution phase differs from frozen structure");
-            }
-            binding.contract->check(backend, sched, graph);
-            if (backend && (binding.phase == "understanding_prefill" || binding.phase == "understanding_decode")) {
-                hierarchy.begin(backend, graph, binding.id, pass);
-                stack.push_back({binding.id, {}, {}, clock::now(), 0});
-            }
-        } else if (backend && !stack.empty()) {
-            auto sample = hierarchy.finish(backend);
-            if (sample.is_null()) {
-                throw std::runtime_error("Unmatched fine timing graph");
-            }
-            const auto tokens = current_phase.tokens;
-            const auto cached = current_phase.cached_tokens;
-            sample.update({
-                {"schema_version", "umm-profiler-hierarchy/v1"},
-                {"graph_id", stack.back().graph_id},
-                {"device_id", device_id},
-                {"case_id", case_id},
-                {"replay", replay},
-                {"level", pass},
-                {"submission",
-                 {{"tokens", tokens < 0 ? json(nullptr) : json(tokens)},
-                  {"cached_tokens", cached < 0 ? json(nullptr) : json(cached)}}},
-            });
-            output.hierarchy.push_back(std::move(sample));
-            stack.pop_back();
-        }
-        return true;
-    }
-    bool observe(ggml_backend_t backend, ggml_backend_sched_t sched, ggml_cgraph * graph, bool completed,
-                 ggml_status status) {
-        if (fine()) {
-            if (status != GGML_STATUS_SUCCESS)
-                throw std::runtime_error("Fine timing graph execution failed");
-            return observe_fine(backend, sched, graph, completed);
-        }
-        if (!completed) {
-            auto start = clock::now();
-            std::string fingerprint;
-            if (pass == "structure") {
-                auto contract = std::make_unique<graph_contract>(backend, sched, graph);
-                const auto & descriptor = contract->description();
-                fingerprint = descriptor.signature(current_phase.phase, requested_backend, true);
-                if (seen.insert(fingerprint).second) {
-                    auto description = descriptor.describe(current_phase.phase, current_phase.tokens,
-                                                           current_phase.cached_tokens, requested_backend);
-                    description["graph_id"] = fingerprint;
-                    description["logical_graph_id"] =
-                        descriptor.signature(current_phase.phase, requested_backend, false);
-                    description["device_id"] = device_id;
-                    output.graphs.push_back(std::move(description));
-                }
-                bindings[case_id].push_back({fingerprint, current_phase.phase, std::move(contract), sched != nullptr});
-            } else {
-                auto & sequence = bindings.at(case_id);
-                if (execution_cursor >= sequence.size())
-                    throw std::runtime_error("Execution has more graphs than frozen structure");
-                auto & registered = sequence[execution_cursor];
-                if (registered.phase != current_phase.phase)
-                    throw std::runtime_error("Execution phase differs from frozen structure");
-                registered.contract->check(backend, sched, graph);
-                fingerprint = registered.id;
-            }
-            ++execution_cursor;
-            const auto parent = stack.empty() ? std::string{} : stack.back().event_id;
-            stack.push_back(
-                {fingerprint, device_id + "-e" + std::to_string(++event_number), parent, clock::now(), elapsed(start)});
-        } else {
-            if (stack.empty())
-                throw std::runtime_error("Unmatched graph event");
-            auto f = stack.back();
-            stack.pop_back();
-            const double duration = elapsed(f.start);
-            output.trace.push_back(
-                {{"schema_version", "umm-profiler-event/v3"},
-                 {"data_origin", "measured"},
-                 {"graph_id", f.graph_id},
-                 {"event_id", f.event_id},
-                 {"parent_event_id", f.parent.empty() ? json(nullptr) : json(f.parent)},
-                 {"device_id", device_id},
-                 {"case_id", case_id},
-                 {"replay", replay},
-                 {"pass", pass},
-                 {"warmup", warmup},
-                 {"kind", sched ? "scheduler" : "backend"},
-                 {"phase", current_phase.phase},
-                 {"submission", {{"tokens", current_phase.tokens}, {"cached_tokens", current_phase.cached_tokens}}},
-                 {"start_ms", std::chrono::duration<double, std::milli>(f.start - origin).count()},
-                 {"duration_ms", duration},
-                 {"export_before_ms", f.export_ms},
-                 {"status", int(status)},
-                 {"timing_scope", remote_timing ? "client_submission_host_wall" : "synchronized_host_wall"},
-                 {"event_type", remote_timing ? "submitted" : "completed"},
-                 {"clock_domain", "client:" + device_id},
-                 {"executed", true},
-                 {"kernel_ms", nullptr}});
-            if (status != GGML_STATUS_SUCCESS)
-                throw std::runtime_error("Graph execution failed");
-            if (!warmup && !remote_timing)
-                samples[f.graph_id].push_back(duration);
-        }
-        return true;
-    }
-    static bool callback(ggml_backend_t backend, ggml_backend_sched_t sched, ggml_cgraph * graph, bool completed,
-                         ggml_status status, void * user) noexcept {
-        auto & self = *static_cast<capture *>(user);
-        try {
-            return self.observe(backend, sched, graph, completed, status);
-        } catch (const std::exception & e) {
-            if (self.error.empty())
-                self.error = e.what();
-            return false;
-        } catch (...) {
-            self.error = "Graph capture failed";
-            return false;
-        }
-    }
-};
-struct observer_scope {
-    capture & collector;
-    bool submission;
-    explicit observer_scope(capture & c) : collector(c), submission(c.remote_timing || (c.remote && c.fine())) {
-        if (submission)
-            ggml_backend_set_graph_submission_observer(capture::callback, &c);
-        else
-            ggml_backend_set_graph_observer(capture::callback, &c);
-    }
-    ~observer_scope() {
-        if (submission)
-            ggml_backend_set_graph_submission_observer(nullptr, nullptr);
-        else
-            ggml_backend_set_graph_observer(nullptr, nullptr);
-        collector.hierarchy.cancel();
-    }
-};
 
-// One window per request; its final response fences the ordered worker stream.
-class rpc_batch {
-#ifdef GGML_USE_RPC
-    ggml_backend_t backend = nullptr;
-    uint64_t sequence = 0, active = 0;
-    std::vector<ggml_rpc_profile_record> records;
-    uint32_t drain() {
-        uint32_t count = 0;
-        auto window = active;
-        active = 0;
-        if (!ggml_backend_rpc_profile_end(backend, window, records.data(), uint32_t(records.size()), &count))
-            throw std::runtime_error("RPC profile records missing, overflowed or out of order");
-        return count;
-    }
-#endif
-public:
-    explicit rpc_batch(const std::string & name) {
-#ifdef GGML_USE_RPC
-        backend = ggml_backend_init_by_name(name.c_str(), nullptr);
-        if (!backend)
-            throw std::runtime_error("Cannot initialize RPC profiling backend");
-        try {
-            start(1);
-            if (drain() != 0)
-                throw std::runtime_error("RPC profiling probe returned unexpected graphs");
-        } catch (...) {
-            ggml_backend_free(backend);
-            backend = nullptr;
-            throw;
-        }
-#else
-        (void)name;
-        throw std::runtime_error("RPC profiling requires GGML_RPC=ON");
-#endif
-    }
-    ~rpc_batch() {
-#ifdef GGML_USE_RPC
-        if (active) {
-            uint32_t count = 0;
-            ggml_backend_rpc_profile_end(backend, active, records.data(), uint32_t(records.size()), &count);
-        }
-        if (backend)
-            ggml_backend_free(backend);
-#endif
-    }
-    void start(size_t expected) {
-#ifdef GGML_USE_RPC
-        if (expected > GGML_RPC_PROFILE_MAX_RECORDS)
-            throw std::runtime_error("RPC request exceeds profiling record capacity");
-        records.resize(std::max(size_t(64), expected));
-        auto window = ++sequence;
-        if (!ggml_backend_rpc_profile_begin(backend, window, uint32_t(records.size())))
-            throw std::runtime_error(
-                "RPC worker does not support batch timing or a window is already active; requires protocol 6.1");
-        active = window;
-#else
-        (void)expected;
-#endif
-    }
-    void finish(capture & c, size_t trace_start) {
-#ifdef GGML_USE_RPC
-        const auto window = active;
-        const auto count = drain();
-        std::vector<size_t> submissions;
-        const auto end = c.output.trace.size();
-        for (size_t i = trace_start; i < end; ++i)
-            if (c.output.trace[i].at("kind") == "backend")
-                submissions.push_back(i);
-        if (count != submissions.size())
-            throw std::runtime_error("RPC records do not match frozen graph submissions");
-        for (size_t i = 0; i < count; ++i) {
-            const auto & record = records[i];
-            auto event = c.output.trace[submissions[i]];
-            const auto submitted_id = event.at("event_id").get<std::string>();
-            event["event_id"] = submitted_id + "-worker";
-            event["submission_event_id"] = submitted_id;
-            event["parent_event_id"] = nullptr;
-            event["clock_domain"] = "worker:" + c.device_id + ":" + std::to_string(window);
-            event["window_id"] = window;
-            event["event_type"] = "completed";
-            event["timing_scope"] = "rpc_worker_synchronized_host_wall";
-            event["start_ms"] = (double(record.start_ns) + double(record.prepare_ns)) / 1e6;
-            event["duration_ms"] = double(record.compute_ns) / 1e6;
-            event["export_before_ms"] = 0;
-            event["worker_prepare_ms"] = double(record.prepare_ns) / 1e6;
-            event["worker_sequence"] = record.sequence;
-            event["worker_device"] = record.device;
-            event["worker_nodes"] = record.n_nodes;
-            event["worker_reused"] = bool(record.reused);
-            event["status"] = record.status;
-            c.samples[event.at("graph_id").get<std::string>()].push_back(double(record.compute_ns) / 1e6);
-            c.output.trace.push_back(std::move(event));
-        }
-#else
-        (void)c;
-        (void)trace_start;
-#endif
-    }
-};
 }
 result profile(const request & input, bool operator_timing) {
     // Backend configuration and SD callbacks are process-global. Profiling owns this process.
@@ -526,7 +261,7 @@ result profile(const request & input, bool operator_timing) {
                     response = runtime::run_inline_case(engine, item, options);
                 }
                 if (c.remote_timing)
-                    batch->finish(c, trace_start);
+                    batch->finish(out.trace, trace_start, c.device_id, c.samples);
                 const double wall = elapsed(request_start);
                 if ((c.pass == "timing" || c.fine()) && c.error.empty() &&
                     c.execution_cursor != c.bindings.at(c.case_id).size())
