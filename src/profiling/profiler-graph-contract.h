@@ -80,4 +80,4 @@ public:
         }
     }
 };
-}
+} // namespace umm::profiling

@@ -155,4 +155,4 @@ void hierarchy_capture::cancel() {
     backend = nullptr;
     current = nullptr;
 }
-}
+} // namespace umm::profiling::detail

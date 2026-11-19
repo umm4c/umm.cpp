@@ -79,4 +79,4 @@ json annotate_timings(const json & graphs, const json & trace) {
     }
     return result;
 }
-}
+} // namespace umm::profiling::detail
