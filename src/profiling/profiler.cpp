@@ -60,10 +60,7 @@ void write_result(const result & output, const std::string & directory) {
     for (const auto & item :
          {std::make_pair("graphs.jsonl", &output.graphs), std::make_pair("trace.jsonl", &output.trace),
           std::make_pair("costs.jsonl", &output.costs), std::make_pair("requests.jsonl", &output.requests),
-          std::make_pair("candidates.jsonl", &output.candidates),
-          std::make_pair("candidate-costs.jsonl", &output.candidate_costs),
-          std::make_pair("snapshots.jsonl", &output.snapshots), std::make_pair("timings.jsonl", &output.timings),
-          std::make_pair("hierarchy.jsonl", &output.hierarchy)}) {
+          std::make_pair("timings.jsonl", &output.timings), std::make_pair("hierarchy.jsonl", &output.hierarchy)}) {
         std::string lines;
         for (const auto & record : *item.second)
             lines += record.dump() + "\n";

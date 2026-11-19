@@ -93,7 +93,12 @@ def validate(root):
         if shape["tokens"] == 1 and shape["cached_tokens"] is not None and shape["cached_tokens"] >= prompt_tokens:
             assert graph["phase"] == "understanding_decode", "Text decode mislabeled as prefill"
 
-    candidates, snapshots, candidate_costs = (rows(name + ".jsonl") for name in ["candidates", "snapshots", "candidate-costs"])
+    # Historical bundles declare the legacy files. A declared file is required.
+    artifacts = manifest["artifacts"]
+    candidates, snapshots, candidate_costs = (
+        rows(name) if name in artifacts else []
+        for name in ("candidates.jsonl", "snapshots.jsonl", "candidate-costs.jsonl")
+    )
     by_candidate = {c["candidate_id"]: c for c in candidates}
     assert len(by_candidate) == len(candidates)
     assert sum(c["selected"] for c in candidates) <= 4
@@ -121,7 +126,7 @@ def validate(root):
         assert req["pass"] == passes[req["replay"]]
 
     annotations = []
-    if "timings.jsonl" in manifest["artifacts"]:
+    if "timings.jsonl" in artifacts:
         annotations = rows("timings.jsonl")
         expected_samples = {}
         for event in events:
@@ -151,7 +156,7 @@ def validate(root):
         assert not expected_samples, "Completed backend timings missing from annotations"
 
     hierarchy_counts = Counter()
-    if "hierarchy.jsonl" in manifest["artifacts"]:
+    if "hierarchy.jsonl" in artifacts:
         def hierarchy_key(row):
             submission = row["submission"]
             shape = tuple(None if value is None or value < 0 else value

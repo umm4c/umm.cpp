@@ -26,7 +26,6 @@ struct result {
     nlohmann::json requests;
     nlohmann::json timings = nlohmann::json::array();
     nlohmann::json hierarchy = nlohmann::json::array();
-    nlohmann::json candidates, candidate_costs, snapshots;
     std::string report;
 };
 
@@ -34,7 +33,7 @@ struct result {
 request parse_request(const nlohmann::json & value);
 // Runs structure and paired baseline/timing replays in a dedicated process.
 result profile(const request & input, bool operator_timing = false);
-// Writes the manifest, graph/event/cost/request and candidate/snapshot artifacts and report.
+// Writes the manifest, graph, trace, timings, costs, requests and report.
 // The output directory must not already exist.
 void write_result(const result & output, const std::string & directory);
 }

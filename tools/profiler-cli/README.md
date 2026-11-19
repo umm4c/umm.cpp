@@ -71,7 +71,7 @@ or use backends before calling this API.
 
 ## C++ API
 
-`include/profiler.h`: `umm::profiling::request`, `device`, `result`,
+`src/profiling/profiler.h`: `umm::profiling::request`, `device`, `result`,
 `parse_request(json)`, `profile(request)` and `write_result(result, directory)`.
 Link `umm-profiler-api`. The public three-field request remains unchanged.
 The writer never overwrites an existing directory; its parent must exist.
@@ -123,10 +123,8 @@ sample count and timing scope. Entries are derived after collection from complet
 backend timing events. A graph with a different structural fingerprint gets its
 own row, even if it has the same stage name or execution order.
 
-`timings.jsonl` covers whole backend submissions. A measured range can
-cover a cut candidate when the range fits entirely inside the candidate and its
-device, inputs and timing scope match. A partial range has unknown time. Request
-baselines in `requests.jsonl` provide the coarser end-to-end reference. Client
+`timings.jsonl` covers whole backend submissions. It does not report timings for subranges.
+Request baselines in `requests.jsonl` provide the coarser end-to-end reference. Client
 submission and inclusive scheduler intervals stay in the trace and must be
 kept separate from backend timings.
 
@@ -150,10 +148,8 @@ per-operator RPC or stream synchronization. Prefer the coarsest matching range
 when scoring a cut. Parent and child ranges and different timing scopes are
 alternative descriptions of the same work.
 
-The regular profiler no longer selects or replays a fixed set of FFNs. The
-three previous candidate files are emitted empty for existing bundle readers.
-The isolated FFN fixture remains in the standalone candidate test. See
-[Profiler design](DESIGN.md) for planned finer measurements and scheduling inputs.
+See [Profiler design](DESIGN.md) for planned measurements and scheduling inputs.
+The validator also reads historical candidate artifacts when declared in the manifest.
 
 Phase metadata covers understanding prefill/decode and native U1 vision graphs.
 Generation is a coarse phase, without individual conditioning/diffusion/VAE graph
@@ -209,9 +205,8 @@ sets `decision_usable: false`.
 Structure capture now collects one `graph_description`, shared by JSON export,
 placement/logical identity and the frozen contract. Timed checks still traverse
 preallocated contract storage without JSON, hashing or old tensor addresses.
-Graph IDs and the v3 output schema are preserved. SHA256 and Base64 encoding
-reuse the vendored implementations; file hashes remain streaming and image-input
-validation is unchanged. Graph/candidate timing distributions share one helper.
+Graph IDs and the schemas of the retained artifacts are preserved. SHA256 uses
+the vendored implementation and file hashes remain streaming.
 
 Keep generic operator microbenchmarks outside this profiler. The deleted upstream
 operator harness is not restored or exposed as a build target.
@@ -219,8 +214,8 @@ operator harness is not restored or exposed as a build target.
 For generic text throughput, use `third_party/llama.cpp/tools/llama-bench` and
 `scripts/compare-llama-bench.py` in a standalone llama.cpp tools/common build.
 Match model/context/backend/NZ settings first; when using RPC, both sides must
-also use `GGML_MAX_NAME=160`. This does not substitute for real U1 multimodal
-workloads or native-resident candidate replay. Graph-copy comparison remains a
+also use `GGML_MAX_NAME=160`. For U1 multimodal workloads, use representative
+requests through the UMM profiler. Graph-copy comparison remains a
 diagnostic path because it allocates/copies reachable tensors, including weights.
 
 Offline hardware inspection uses [msprof-import](../../../utils/msprof-import/README.md)
@@ -228,8 +223,7 @@ with existing CANN exports. It does not collect hardware traces inside ordinary
 timing passes or infer cross-host clock offsets/node-to-kernel mappings.
 
 ```bash
-cmake --build build-profiler --target umm-profiler-observer-test umm-profiler-candidate-test umm-profiler-contract-test -j 4
-build-profiler/bin/umm-profiler-candidate-test
+cmake --build build-profiler --target umm-profiler-observer-test umm-profiler-contract-test -j 4
 build-profiler/bin/umm-profiler-contract-test
 build-profiler/bin/umm-profiler-observer-test
 python3 tests/profiling/test_interface.py build-profiler/bin/umm-profiler
@@ -241,19 +235,7 @@ thread isolation, synchronized output, abort and disable. A simulated RPC queue
 also checks completion before END, exact read counts, and work queued by an eval
 callback after child completion. CLI checks cover request
 validation, missing inputs without mock success and rejection of existing output.
-The candidate check covers topology closure, capture at execution boundaries, exact
-CPU replay, boundary timing, and rejection of an extra intermediate consumer.
 Real-model captures and paired observer-off controls are separate integration checks.
-
-Candidate replay still uses completion-read timing; it is not converted into
-worker-only cost by this change. The completion-read size is intentional: an integration probe through the deployed
-SSH tunnel showed roughly 44 ms for 1/64-byte responses versus about 2.2 ms for
-4096-byte responses. This localizes the disturbance to the small-read path; it
-is not proof of the exact TCP/SSH mechanism. The bounded read preserves ordered
-server completion without changing the worker/protocol. Small graphs with no
-4096-byte result may still incur that disturbance. Compute records include the
-completion-read overhead and are not pure device compute. Full roundtrip timing
-uses its result copy as the completion fence, avoiding an extra read.
 
 Optional RPC integration check against an existing worker:
 
@@ -273,7 +255,7 @@ GGML_RPC_NO_RDMA=1 build-profiler/bin/umm-profiler-rpc-fence-test 127.0.0.1:5005
 
 [Graph Atlas](../../../utils/profiler-viewer/README.md) packages existing profiler output into an offline
 interactive page, with phase/device/length filters, folded layers, operator
-inspection, exact candidate boundaries and measured cost comparisons. It does not
+inspection, device placement and measured graph costs. It does not
 run the model or change scheduling. Previewed plans are clearly marked unexecuted.
 
 ```bash
@@ -292,8 +274,5 @@ profile directory is not exposed as a file server.
 
 RPC transport/cache costs depend on the endpoint and worker version. Protocol 6.2
 keeps immutable `WEIGHTS` uploads cached and sends large dynamic buffers without
-content hashing or disk caching; 6.0/6.1 workers keep the old behavior. Re-measure
-candidate boundaries after changing either the route or worker policy. Repeated
-snapshot inputs may hit the old activation cache, so their timings do not model
-all changing-input workloads. Keep endpoint, SSH route/state, worker binary and
-cache policy with the capture; do not reuse old boundary costs across these changes.
+content hashing or disk caching; 6.0/6.1 workers keep the old behavior. Record the endpoint,
+SSH route, worker build and cache policy with the capture.

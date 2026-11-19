@@ -40,7 +40,7 @@ flowchart LR
 | `src/scheduling/` | 执行策略选择、计算图放置和权重副本管理 |
 | `src/scheduling/policies/` | 本地 310P、远端 910B 和随机放置策略，每种策略一个实现文件 |
 | `src/runtime/` | 请求处理、HTTP 服务、运行监控和图像读写 |
-| `src/profiling/` | 采集计算图、测量候选子图和导出分析结果 |
+| `src/profiling/` | 采集计算图和分层计时并导出结果 |
 | `src/apps/` | CLI、会话程序和服务端入口 |
 | `include/` | 会话 API 及其公开类型 |
 | `tools/` | 分析工具的命令行入口、采集校验脚本和模型实验工具 |
@@ -200,6 +200,6 @@ int main() {
 
 ## 计算图分析工具
 
-可以用离线工具 [Graph Atlas 查看器](https://github.com/umm4c/utils/blob/master/profiler-viewer/README.md) 浏览已有采集结果，包括可折叠的层级、算子依赖、候选子图的边界和实测开销对比。
+可以用离线工具 [Graph Atlas 查看器](https://github.com/umm4c/utils/blob/master/profiler-viewer/README.md) 浏览已有采集结果，包括可折叠的层级、算子依赖和设备放置。
 
-[计算图分析工具](tools/profiler-cli/README.md) 在指定设备列表上重放模型和代表性负载，导出真实计算图、设备放置和同步主机计时。首版采集器支持在本地 310P 和已有的 CANN RPC worker 上运行 SenseNova U1。工具自动筛选依赖闭合的 FFN 候选子图，在独立轮次采集真实边界输入，再分别测量各设备上的独立计算耗时和实际张量复制的往返耗时。整图调度方案的合法性检查、设备内核计时和调度决策验证仍待完成。
+[计算图分析工具](tools/profiler-cli/README.md) 在指定设备列表上重放模型和代表性负载，导出真实计算图、设备放置和同步主机计时。首版采集器支持在本地 310P 和已有的 CANN RPC worker 上运行 SenseNova U1。理解图另有层、块和可选算子计时。整图调度方案的合法性检查、设备内核计时和调度决策验证仍待完成。

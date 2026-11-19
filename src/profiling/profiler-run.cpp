@@ -8,6 +8,7 @@
 #include "scheduling/execution-policy.h"
 #include "inference/model-package.h"
 #include "ggml-backend.h"
+#include "../../third_party/llama.cpp/common/base64.hpp"
 #ifdef GGML_USE_RPC
 #include "ggml-rpc.h"
 #endif
@@ -592,10 +593,6 @@ result profile(const request & input, bool operator_timing) {
         }
     }
     out.timings = detail::annotate_timings(out.graphs, out.trace);
-    // The legacy bundle files remain readable by existing viewers.
-    out.candidates = json::array();
-    out.candidate_costs = json::array();
-    out.snapshots = json::array();
     out.manifest = {
         {"schema_version", "umm-profiler/v3"},
         {"data_origin", "measured"},
@@ -633,9 +630,6 @@ result profile(const request & input, bool operator_timing) {
         {"coverage",
          {{"workload_loaded", true},
           {"device_probed", true},
-          {"cut_legality", false},
-          {"isolated_ffn_replay", false},
-          {"selected_boundary_roundtrip", false},
           {"operator_timing", std::any_of(out.hierarchy.begin(), out.hierarchy.end(),
                                           [](const auto & item) {
                                               return item.at("level") == "operator" && item.contains("spans") &&
@@ -650,8 +644,8 @@ result profile(const request & input, bool operator_timing) {
           {"phase_coverage", "understanding prefill/decode, U1 vision, coarse generation"},
           {"correctness", stable ? "within_device_output_repeatable" : "within_device_output_changed"}}},
         {"artifacts",
-         {"graphs.jsonl", "trace.jsonl", "costs.jsonl", "requests.jsonl", "candidates.jsonl", "candidate-costs.jsonl",
-          "snapshots.jsonl", "timings.jsonl", "hierarchy.jsonl", "report.md"}}};
+         {"graphs.jsonl", "trace.jsonl", "costs.jsonl", "requests.jsonl", "timings.jsonl", "hierarchy.jsonl",
+          "report.md"}}};
     out.report =
         "# Graph profiler\n\n"
         "Runs the structure and paired baseline/timing passes before separate layer, block and optional operator passes. "

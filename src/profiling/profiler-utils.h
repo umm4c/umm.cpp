@@ -1,25 +1,13 @@
 #pragma once
 #include "hash/hash.h"
-#include "../../third_party/llama.cpp/common/base64.hpp"
 #include "json.hpp"
 #include <algorithm>
-#include <chrono>
 #include <vector>
-#include <cstdint>
 #include <string>
 #include <stdexcept>
 namespace umm::profiling::detail {
-using clock = std::chrono::steady_clock;
-inline double elapsed(clock::time_point start) {
-    return std::chrono::duration<double, std::milli>(clock::now() - start).count();
-}
 inline std::string hash(const std::string & value) {
     return hash_sha256_hex(value.data(), value.size());
-}
-inline std::string base64(const std::vector<uint8_t> & bytes) {
-    if (bytes.empty())
-        return {};
-    return ::base64::encode(reinterpret_cast<const char *>(bytes.data()), bytes.size());
 }
 inline nlohmann::json sample_statistics(std::vector<double> values) {
     if (values.empty())

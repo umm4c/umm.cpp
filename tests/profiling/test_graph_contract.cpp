@@ -1,6 +1,7 @@
 #include "profiling/profiler-graph-contract.h"
 #include "ggml-cpu.h"
 #include "ggml-alloc.h"
+#include "../../third_party/llama.cpp/common/base64.hpp"
 #include <cstdio>
 #include <stdexcept>
 #include <cmath>
@@ -41,9 +42,9 @@ template <class F> void rejects(F fn) {
 }
 int main() {
     require(umm::profiling::detail::hash("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-    require(umm::profiling::detail::base64({}) == "");
-    require(umm::profiling::detail::base64({0, 255}) == "AP8=");
-    require(umm::profiling::detail::base64({'f', 'o', 'o'}) == "Zm9v");
+    require(base64::encode("") == "");
+    require(base64::encode("\x00\xff", 2) == "AP8=");
+    require(base64::encode("foo") == "Zm9v");
     auto stats = umm::profiling::detail::sample_statistics({4, 1, 2, 3});
     require(stats["p50"] == 2.5 && std::abs(stats["p95"].get<double>() - 3.85) < 1e-12);
     auto backend = ggml_backend_cpu_init();
