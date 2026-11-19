@@ -28,18 +28,21 @@ target_include_directories(stable-diffusion PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}
 
 add_subdirectory(src/scheduling)
 
+# Model metadata shared by the adapter and the inference workflows.
+add_library(umm-model-registry STATIC src/inference/model-registry.cpp)
+target_include_directories(umm-model-registry PUBLIC include)
+
 # UMM llama.cpp integration ---------------------------------------------------
-add_library(llama.cpp
+add_library(umm-llama-adapter STATIC
     src/adapters/llama-cpp-adapter.cpp
     src/adapters/llama-cpp-image-input.cpp
     src/adapters/llama-cpp-kv.cpp
     src/adapters/kv-prefix.cpp
-    src/inference/model-registry.cpp
 )
-target_include_directories(llama.cpp PUBLIC include PRIVATE src "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/src")
-target_link_libraries(llama.cpp PUBLIC llama PRIVATE umm-scheduling)
+target_include_directories(umm-llama-adapter PUBLIC include PRIVATE src "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/src")
+target_link_libraries(umm-llama-adapter PUBLIC llama PRIVATE umm-model-registry umm-scheduling)
 
-# UMM runtime -----------------------------------------------------------------
+# UMM inference ---------------------------------------------------------------
 add_library(umm
     src/inference/session.cpp
     src/adapters/diffusion-adapter.cpp
@@ -50,20 +53,23 @@ add_library(umm
     src/adapters/vision-encoder.cpp
 )
 target_include_directories(umm PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" PRIVATE src)
-target_link_libraries(umm PRIVATE llama.cpp sd.cpp umm-scheduling)
-target_link_libraries(umm PRIVATE mtmd)
+target_link_libraries(umm PRIVATE umm-llama-adapter umm-model-registry sd.cpp umm-scheduling mtmd)
+
+add_library(umm-image-io STATIC src/runtime/image-io.cpp)
+target_include_directories(umm-image-io PRIVATE include
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty")
 
 # Command-line application ----------------------------------------------------
-add_executable(umm-cli src/apps/main.cpp src/apps/cli.cpp src/runtime/image-io.cpp)
+add_executable(umm-cli src/apps/main.cpp src/apps/cli.cpp)
 target_include_directories(umm-cli PRIVATE src
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"
 )
-target_link_libraries(umm-cli PRIVATE umm umm-scheduling)
+target_link_libraries(umm-cli PRIVATE umm umm-scheduling umm-image-io)
 
 # Persistent, structured interface for serial benchmark replay.
 find_package(Threads REQUIRED)
 add_library(umm-runtime STATIC src/runtime/request-execution.cpp src/runtime/service.cpp
-    src/runtime/system-monitor.cpp src/runtime/http.cpp src/runtime/image-io.cpp
+    src/runtime/system-monitor.cpp src/runtime/http.cpp
     src/runtime/options.cpp src/runtime/identity.cpp
     src/runtime/case-protocol.cpp src/runtime/jsonl.cpp)
 target_include_directories(umm-runtime PUBLIC
@@ -71,7 +77,7 @@ target_include_directories(umm-runtime PUBLIC
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/vendor/hash/sha256"
     PRIVATE src)
-target_link_libraries(umm-runtime PUBLIC umm ggml Threads::Threads PRIVATE vendor::hash umm-scheduling)
+target_link_libraries(umm-runtime PUBLIC umm ggml Threads::Threads PRIVATE vendor::hash umm-scheduling umm-image-io)
 add_executable(umm-session src/apps/jsonl-session.cpp)
 add_executable(umm-server src/apps/server.cpp)
 target_include_directories(umm-server PRIVATE src)

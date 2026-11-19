@@ -1,5 +1,4 @@
-// stb is a single-header library. Emit the implementation once in the CLI
-// executable; the rest of the application uses this small wrapper.
+// Compile the stb implementations once in the shared image I/O target.
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -11,7 +10,7 @@
 #include <stdexcept>
 #include <limits>
 
-namespace umm::cli {
+namespace umm::runtime {
 
 static const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 

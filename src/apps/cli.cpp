@@ -168,7 +168,7 @@ int run(int argc, char ** argv) {
     const bool understanding = mode == "understand" || mode == "think-understand";
     const bool editing = mode == "edit" || mode == "think-edit";
     if (understanding || editing) {
-        const auto input = read_image(required(args, "--input"));
+        const auto input = runtime::read_image(required(args, "--input"));
         if (understanding) {
             std::cout << session.understand(input, prompt, std::stoi(value(args, "--max-tokens", "256")),
                                             mode == "think-understand")
@@ -191,7 +191,7 @@ int run(int argc, char ** argv) {
         options.max_think_tokens = std::stoi(value(args, "--max-tokens", "1024"));
         const auto image = session.edit(input, prompt, options);
         const auto output = std::filesystem::path(value(args, "--output", "image.png"));
-        write_png(output, image);
+        runtime::write_png(output, image);
         write_metadata(output, mode, prompt, options, image);
         std::cout << image.reasoning << '\n' << output << '\n';
         return 0;
@@ -216,7 +216,7 @@ int run(int argc, char ** argv) {
                                                std::stoi(value(args, "--max-images", "2")));
         const auto output = std::filesystem::path(value(args, "--output", "interleave"));
         for (size_t i = 0; i < result.images.size(); ++i) {
-            write_png(output.string() + "_image_" + std::to_string(i) + ".png", result.images[i]);
+            runtime::write_png(output.string() + "_image_" + std::to_string(i) + ".png", result.images[i]);
         }
         std::ofstream text_file(output.string() + ".txt");
         if (!text_file) {
@@ -229,7 +229,7 @@ int run(int argc, char ** argv) {
 
     const auto image = session.image(prompt, options);
     const auto output = std::filesystem::path(value(args, "--output", "image.png"));
-    write_png(output, image);
+    runtime::write_png(output, image);
     write_metadata(output, mode, prompt, options, image);
     std::cout << image.reasoning << '\n' << output << '\n';
     return 0;

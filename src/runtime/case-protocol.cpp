@@ -82,7 +82,7 @@ image_options generation_options(const json & params, const options & args) {
 }
 
 image_input decode_data_url(const json & image) {
-    return cli::read_image_data_url(required<std::string>(image, "data_url"));
+    return read_image_data_url(required<std::string>(image, "data_url"));
 }
 
 void configure_inline_generation(const json &, const json & params, image_options & generation) {
@@ -109,7 +109,7 @@ void configure_inline_generation(const json &, const json & params, image_option
 json deliver_inline(const json &, const image_result & image, request_metrics &, double & output_encode_ms) {
     const auto start = metrics_clock::now();
     json output = {
-        {"type", "image"}, {"b64_json", cli::png_base64(image)}, {"width", image.width}, {"height", image.height}};
+        {"type", "image"}, {"b64_json", png_base64(image)}, {"width", image.width}, {"height", image.height}};
     output_encode_ms = metrics_elapsed_ms(start);
     return output;
 }

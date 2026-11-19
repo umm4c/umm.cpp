@@ -7,7 +7,7 @@ namespace umm::runtime {
 namespace {
 
 image_input decode_file(const json & image) {
-    return cli::read_image(required<std::string>(image, "path"));
+    return read_image(required<std::string>(image, "path"));
 }
 
 std::filesystem::path png_path(const json & request) {
@@ -29,7 +29,7 @@ json deliver_file(const json & request, const image_result & image, request_metr
     const auto path = png_path(request);
     std::filesystem::create_directories(path.parent_path());
     const auto start = metrics_clock::now();
-    cli::write_png(path, image);
+    write_png(path, image);
     std::filesystem::permissions(path, std::filesystem::perms::group_read | std::filesystem::perms::others_read,
                                  std::filesystem::perm_options::add);
     metrics.image_write_ms = metrics_elapsed_ms(start);
