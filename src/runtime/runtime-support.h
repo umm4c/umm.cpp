@@ -23,6 +23,7 @@ public:
     void begin();
     json end();
     json snapshot() const;
+
 private:
     struct impl;
     std::unique_ptr<impl> state;
@@ -37,6 +38,7 @@ public:
     std::string metrics() const;
     void reject(const std::string & reason);
     void http_completed(const std::string & id, const std::string & task, const std::string & status, double ms);
+
 private:
     struct impl;
     std::unique_ptr<impl> state;

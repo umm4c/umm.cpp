@@ -27,9 +27,8 @@ struct u1_prefill_segment {
 class llama_cpp_adapter {
 public:
     explicit llama_cpp_adapter(const std::string & model_path, int context_size = 0, int gpu_layers = 99,
-                               bool full_precision = false, const std::string & backend = "",
-                               int batch_size = 0, int microbatch_size = 0,
-                               const std::string & secondary_backend = "");
+                               bool full_precision = false, const std::string & backend = "", int batch_size = 0,
+                               int microbatch_size = 0, const std::string & secondary_backend = "");
     std::vector<llama_token> tokenize(const std::string & text) const;
     std::string piece(llama_token token) const;
     bool is_end(llama_token token) const;
@@ -38,24 +37,20 @@ public:
     ggml_backend_sched_t scheduler() const;
     void set_placement(graph_placement placement);
     std::vector<ggml_tensor *> weights() const;
-    void append(const std::vector<llama_token> & tokens, bool need_logits = true,
-                request_metrics * metrics = nullptr);
+    void append(const std::vector<llama_token> & tokens, bool need_logits = true, request_metrics * metrics = nullptr);
     // BAGEL supplies a flat sequence of vision embeddings.
     void append_bagel_image_embeddings(const std::vector<float> & embeddings);
     // SenseNova U1 supplies spatial embeddings with a 2-D image grid.
-    void append_u1_image_embeddings(const std::vector<float> & embeddings,
-                                    int grid_width, int grid_height,
+    void append_u1_image_embeddings(const std::vector<float> & embeddings, int grid_width, int grid_height,
                                     bool need_logits = true, request_metrics * metrics = nullptr);
     // Requires an already appended <img>; the caller supplies </img> when close_image is false.
-    void append_u1_image_body(const std::vector<float> & embeddings,
-                              int grid_width, int grid_height, bool close_image = true,
-                              bool need_logits = true, request_metrics * metrics = nullptr);
+    void append_u1_image_body(const std::vector<float> & embeddings, int grid_width, int grid_height,
+                              bool close_image = true, bool need_logits = true, request_metrics * metrics = nullptr);
     // Text supplies <img>/</img>; image segments stay whole within each microbatch.
     void append_u1_mixed(const std::vector<u1_prefill_segment> & segments, bool need_logits,
                          request_metrics * metrics = nullptr);
     // The <img> token is already present after an image-generation request.
-    void append_u1_generated_image_embeddings(const std::vector<float> & embeddings,
-                                              int grid_width, int grid_height);
+    void append_u1_generated_image_embeddings(const std::vector<float> & embeddings, int grid_width, int grid_height);
     // Capacity for image embeddings before appending their start/end tokens.
     size_t available_u1_generated_image_tokens() const;
     llama_token greedy() const;

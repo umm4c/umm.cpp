@@ -45,19 +45,41 @@ option_map parse_arguments(int argc, char ** argv) {
             print_help();
             return {};
         }
-        if (key.rfind("--", 0) != 0 || i + 1 == argc ||
-            !args.emplace(key, argv[++i]).second) {
+        if (key.rfind("--", 0) != 0 || i + 1 == argc || !args.emplace(key, argv[++i]).second) {
             throw std::invalid_argument("Expected unique --option value pairs; use --help");
         }
     }
 
     const std::vector<std::string> known = {
-        "--execution-policy", "--rpc-endpoint", "--local-device", "--policy-seed", "--policy-cuts",
-        "--model", "--mode", "--prompt", "--input", "--output", "--max-tokens", "--max-images",
-        "--width", "--height", "--steps", "--cfg", "--image-cfg", "--shift", "--seed",
-        "--vae-tiling", "--vae-tile-size", "--vae-tile-overlap",
-        "--understanding-backend", "--vision-backend", "--generation-backend", "--generation-max-vram",
-        "--n-ctx", "--n-batch", "--n-ubatch",
+        "--execution-policy",
+        "--rpc-endpoint",
+        "--local-device",
+        "--policy-seed",
+        "--policy-cuts",
+        "--model",
+        "--mode",
+        "--prompt",
+        "--input",
+        "--output",
+        "--max-tokens",
+        "--max-images",
+        "--width",
+        "--height",
+        "--steps",
+        "--cfg",
+        "--image-cfg",
+        "--shift",
+        "--seed",
+        "--vae-tiling",
+        "--vae-tile-size",
+        "--vae-tile-overlap",
+        "--understanding-backend",
+        "--vision-backend",
+        "--generation-backend",
+        "--generation-max-vram",
+        "--n-ctx",
+        "--n-batch",
+        "--n-ubatch",
         "--cann-q8-nz",
     };
     for (const auto & entry : args) {
@@ -68,8 +90,7 @@ option_map parse_arguments(int argc, char ** argv) {
     return args;
 }
 
-std::string value(const option_map & args, const std::string & key,
-                  const std::string & fallback = {}) {
+std::string value(const option_map & args, const std::string & key, const std::string & fallback = {}) {
     const auto found = args.find(key);
     return found == args.end() ? fallback : found->second;
 }
@@ -82,11 +103,8 @@ const std::string & required(const option_map & args, const std::string & key) {
     return found->second;
 }
 
-void write_metadata(const std::filesystem::path & output,
-                    const std::string & mode,
-                    const std::string & prompt,
-                    const umm::image_options & options,
-                    const umm::image_result & image) {
+void write_metadata(const std::filesystem::path & output, const std::string & mode, const std::string & prompt,
+                    const umm::image_options & options, const umm::image_result & image) {
     const nlohmann::json metadata = {
         {"mode", mode},
         {"prompt", prompt},
@@ -129,23 +147,23 @@ int run(int argc, char ** argv) {
 
     const auto mode = value(args, "--mode", "text");
     const std::vector<std::string> modes = {
-        "text", "image", "think-image", "interleave", "think-interleave",
-        "understand", "think-understand", "edit", "think-edit",
+        "text", "image",      "think-image", "interleave", "think-interleave", "understand", "think-understand",
+        "edit", "think-edit",
     };
     if (std::find(modes.begin(), modes.end(), mode) == modes.end())
         throw std::invalid_argument("Unsupported mode: " + mode);
 
     if (args.count("--cann-q8-nz")) {
         const auto & enabled = args.at("--cann-q8-nz");
-        if (enabled != "0" && enabled != "1") throw std::invalid_argument("cann-q8-nz must be 0 or 1");
-        if (setenv("GGML_CANN_Q8_NZ", enabled.c_str(), 1)) throw std::runtime_error("Could not configure CANN Q8 layout");
+        if (enabled != "0" && enabled != "1")
+            throw std::invalid_argument("cann-q8-nz must be 0 or 1");
+        if (setenv("GGML_CANN_Q8_NZ", enabled.c_str(), 1))
+            throw std::runtime_error("Could not configure CANN Q8 layout");
     }
 
-    umm::session session(model, "", value(args, "--understanding-backend"),
-                         value(args, "--generation-backend"), value(args, "--generation-max-vram"),
-                         value(args, "--vision-backend"),
-                         std::stoi(value(args, "--n-ctx", "0")),
-                         std::stoi(value(args, "--n-batch", "0")),
+    umm::session session(model, "", value(args, "--understanding-backend"), value(args, "--generation-backend"),
+                         value(args, "--generation-max-vram"), value(args, "--vision-backend"),
+                         std::stoi(value(args, "--n-ctx", "0")), std::stoi(value(args, "--n-batch", "0")),
                          std::stoi(value(args, "--n-ubatch", "0")), schedule);
     if (mode == "text") {
         std::cout << session.text(prompt, std::stoi(value(args, "--max-tokens", "256"))) << '\n';
@@ -158,8 +176,9 @@ int run(int argc, char ** argv) {
     if (understanding || editing) {
         const auto input = read_image(required(args, "--input"));
         if (understanding) {
-            std::cout << session.understand(input, prompt,
-                std::stoi(value(args, "--max-tokens", "256")), mode == "think-understand") << '\n';
+            std::cout << session.understand(input, prompt, std::stoi(value(args, "--max-tokens", "256")),
+                                            mode == "think-understand")
+                      << '\n';
             return 0;
         }
 
@@ -199,9 +218,8 @@ int run(int argc, char ** argv) {
     options.max_think_tokens = std::stoi(value(args, "--max-tokens", "1024"));
 
     if (interleave_mode) {
-        const auto result = session.interleave(prompt, options,
-            std::stoi(value(args, "--max-tokens", "256")),
-            std::stoi(value(args, "--max-images", "2")));
+        const auto result = session.interleave(prompt, options, std::stoi(value(args, "--max-tokens", "256")),
+                                               std::stoi(value(args, "--max-images", "2")));
         const auto output = std::filesystem::path(value(args, "--output", "interleave"));
         for (size_t i = 0; i < result.images.size(); ++i) {
             write_png(output.string() + "_image_" + std::to_string(i) + ".png", result.images[i]);

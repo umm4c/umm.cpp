@@ -36,17 +36,15 @@ public:
     // Format a prompt-only request for the model's tokenizer/chat template.
     virtual std::string text_prompt(const std::string & prompt) const = 0;
     // Answer a question conditioned on an input image.
-    virtual std::string understand(workflow_context & context, const image_input & image,
-                                    const std::string & prompt, int max_tokens, bool think);
+    virtual std::string understand(workflow_context & context, const image_input & image, const std::string & prompt,
+                                   int max_tokens, bool think);
     virtual std::string understand_sequence(workflow_context & context,
-                                            const std::vector<understanding_segment> & content,
-                                            int max_tokens);
+                                            const std::vector<understanding_segment> & content, int max_tokens);
     // Generate an image, optionally conditioned on an input image for editing.
-    virtual image_result generate(workflow_context & context, const std::string & prompt,
-                                  const image_options & options, const image_input * input) = 0;
+    virtual image_result generate(workflow_context & context, const std::string & prompt, const image_options & options,
+                                  const image_input * input) = 0;
     virtual interleave_result interleave(workflow_context & context, const std::string & prompt,
-                                         const image_options & options, int max_text_tokens,
-                                         int max_images);
+                                         const image_options & options, int max_text_tokens, int max_images);
 };
 
 namespace workflow_detail {

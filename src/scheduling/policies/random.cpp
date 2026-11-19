@@ -11,22 +11,28 @@
 namespace umm {
 namespace {
 bool metadata(const ggml_tensor * t) {
-    return t->op == GGML_OP_NONE || t->op == GGML_OP_VIEW || t->op == GGML_OP_RESHAPE ||
-           t->op == GGML_OP_TRANSPOSE || t->op == GGML_OP_PERMUTE;
+    return t->op == GGML_OP_NONE || t->op == GGML_OP_VIEW || t->op == GGML_OP_RESHAPE || t->op == GGML_OP_TRANSPOSE ||
+           t->op == GGML_OP_PERMUTE;
 }
 ggml_backend_t owner(ggml_tensor * t, const std::unordered_map<ggml_tensor *, ggml_backend_t> & assigned,
                      ggml_backend_t a, ggml_backend_t b) {
-    while (t->view_src) t = t->view_src;
+    while (t->view_src)
+        t = t->view_src;
     const auto it = assigned.find(t);
-    if (it != assigned.end()) return it->second;
-    if (!t->buffer) return nullptr;
+    if (it != assigned.end())
+        return it->second;
+    if (!t->buffer)
+        return nullptr;
     auto device = ggml_backend_buft_get_device(ggml_backend_buffer_get_type(t->buffer));
-    if (device == ggml_backend_get_device(a)) return a;
-    if (device == ggml_backend_get_device(b)) return b;
+    if (device == ggml_backend_get_device(a))
+        return a;
+    if (device == ggml_backend_get_device(b))
+        return b;
     return nullptr;
 }
-bool candidate(ggml_cgraph * graph, ggml_backend_t a, ggml_backend_t b, const std::vector<int> & cuts, random_plan & plan,
-               std::unordered_map<ggml_tensor *, bool> & support_a, std::unordered_map<ggml_tensor *, bool> & support_b) {
+bool candidate(ggml_cgraph * graph, ggml_backend_t a, ggml_backend_t b, const std::vector<int> & cuts,
+               random_plan & plan, std::unordered_map<ggml_tensor *, bool> & support_a,
+               std::unordered_map<ggml_tensor *, bool> & support_b) {
     std::unordered_map<ggml_tensor *, ggml_backend_t> assigned;
     plan.placements.clear();
     for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
@@ -36,19 +42,24 @@ bool candidate(ggml_cgraph * graph, ggml_backend_t a, ggml_backend_t b, const st
         if (metadata(node)) {
             if (node->buffer && !node->view_src) {
                 backend = owner(node, assigned, a, b);
-                if (!backend) continue;
+                if (!backend)
+                    continue;
             }
             if (node->view_src) {
                 backend = owner(node, assigned, a, b);
-                if (!backend) continue; // Host-only metadata remains with its allocated storage.
+                if (!backend)
+                    continue; // Host-only metadata remains with its allocated storage.
             }
         } else {
             // Allocated outputs and aliases cannot change their storage owner.
-            if ((node->buffer || node->view_src) && owner(node, assigned, a, b) != backend) return false;
+            if ((node->buffer || node->view_src) && owner(node, assigned, a, b) != backend)
+                return false;
             auto & support = backend == a ? support_a : support_b;
             auto it = support.find(node);
-            if (it == support.end()) it = support.emplace(node, ggml_backend_supports_op(backend, node)).first;
-            if (!it->second) return false;
+            if (it == support.end())
+                it = support.emplace(node, ggml_backend_supports_op(backend, node)).first;
+            if (!it->second)
+                return false;
         }
         assigned[node] = backend;
         plan.placements.push_back({node, backend});
@@ -57,8 +68,7 @@ bool candidate(ggml_cgraph * graph, ggml_backend_t a, ggml_backend_t b, const st
 }
 }
 namespace {
-template<typename T>
-T parse_number(const execution_options & options, const char * key, const char * fallback) {
+template <typename T> T parse_number(const execution_options & options, const char * key, const char * fallback) {
     const auto value = policy_options::get(options, key, fallback);
     T number{};
     const char * end = value.data() + value.size();
@@ -92,29 +102,31 @@ understanding_schedule random_policy::apply(execution_options & options) const {
     const auto secondary = ggml_backend_dev_by_name(remote.c_str());
 
     return {remote, [primary, secondary, seed, cuts, placement = random_plan{}](
-            ggml_backend_sched_t sched, ggml_cgraph * graph, bool allocated) mutable {
-        if (allocated) {
-            check_random_plan(sched, placement);
-            return;
-        }
-        ggml_backend_t local_backend = nullptr;
-        ggml_backend_t remote_backend = nullptr;
-        for (int i = 0; i < ggml_backend_sched_get_n_backends(sched); ++i) {
-            const auto backend = ggml_backend_sched_get_backend(sched, i);
-            const auto device = ggml_backend_get_device(backend);
-            if (device == primary) local_backend = backend;
-            if (device == secondary) remote_backend = backend;
-        }
-        if (!local_backend || !remote_backend) {
-            throw std::runtime_error("Random placement requires both configured devices in the scheduler");
-        }
-        placement = plan(graph, local_backend, remote_backend, seed, false, cuts);
-        assign_random_plan(sched, placement);
-    }};
+                        ggml_backend_sched_t sched, ggml_cgraph * graph, bool allocated) mutable {
+                if (allocated) {
+                    check_random_plan(sched, placement);
+                    return;
+                }
+                ggml_backend_t local_backend = nullptr;
+                ggml_backend_t remote_backend = nullptr;
+                for (int i = 0; i < ggml_backend_sched_get_n_backends(sched); ++i) {
+                    const auto backend = ggml_backend_sched_get_backend(sched, i);
+                    const auto device = ggml_backend_get_device(backend);
+                    if (device == primary)
+                        local_backend = backend;
+                    if (device == secondary)
+                        remote_backend = backend;
+                }
+                if (!local_backend || !remote_backend) {
+                    throw std::runtime_error("Random placement requires both configured devices in the scheduler");
+                }
+                placement = plan(graph, local_backend, remote_backend, seed, false, cuts);
+                assign_random_plan(sched, placement);
+            }};
 }
 
-random_plan random_policy::plan(ggml_cgraph * graph, ggml_backend_t first,
-                                   ggml_backend_t second, uint32_t seed, bool reverse, int cut_count) {
+random_plan random_policy::plan(ggml_cgraph * graph, ggml_backend_t first, ggml_backend_t second, uint32_t seed,
+                                bool reverse, int cut_count) {
     if (!graph || !first || !second || ggml_backend_get_device(first) == ggml_backend_get_device(second)) {
         throw std::invalid_argument("Random partition requires a graph and two distinct devices");
     }
@@ -122,7 +134,8 @@ random_plan random_policy::plan(ggml_cgraph * graph, ggml_backend_t first,
     bool seen_compute = false;
     for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
         if (!metadata(ggml_graph_node(graph, i))) {
-            if (seen_compute) cuts.push_back(i);
+            if (seen_compute)
+                cuts.push_back(i);
             seen_compute = true;
         }
     }
@@ -159,8 +172,10 @@ random_plan random_policy::plan(ggml_cgraph * graph, ggml_backend_t first,
     throw std::runtime_error("No valid random partition found in the candidate search budget");
 }
 void assign_random_plan(ggml_backend_sched_t sched, const random_plan & plan) {
-    if (!sched || plan.cut_nodes.empty() || plan.placements.empty()) throw std::invalid_argument("Invalid random plan");
-    for (const auto & p : plan.placements) ggml_backend_sched_set_tensor_backend(sched, p.node, p.backend);
+    if (!sched || plan.cut_nodes.empty() || plan.placements.empty())
+        throw std::invalid_argument("Invalid random plan");
+    for (const auto & p : plan.placements)
+        ggml_backend_sched_set_tensor_backend(sched, p.node, p.backend);
 }
 void check_random_plan(ggml_backend_sched_t sched, const random_plan & plan) {
     for (const auto & p : plan.placements) {

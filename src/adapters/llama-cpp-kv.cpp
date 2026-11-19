@@ -29,13 +29,15 @@ kv_prefix llama_cpp_adapter::export_prefix() const {
     // The device views and any packed V tensors live only through the host copy.
     std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> backend(nullptr, ggml_backend_free);
     std::unique_ptr<ggml_context, decltype(&ggml_free)> descriptors(nullptr, ggml_free);
-    std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> storage(nullptr, ggml_backend_buffer_free);
+    std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)> storage(nullptr,
+                                                                                      ggml_backend_buffer_free);
     std::vector<ggml_tensor *> device_keys;
     std::vector<ggml_tensor *> device_values;
     device_keys.reserve(layers.size());
     device_values.reserve(layers.size());
-    const size_t max_nodes = 6*layers.size() + 4;
-    descriptors.reset(ggml_init({ggml_tensor_overhead()*max_nodes + ggml_graph_overhead_custom(max_nodes, false), nullptr, true}));
+    const size_t max_nodes = 6 * layers.size() + 4;
+    descriptors.reset(
+        ggml_init({ggml_tensor_overhead() * max_nodes + ggml_graph_overhead_custom(max_nodes, false), nullptr, true}));
     if (!descriptors) {
         throw std::runtime_error("Could not allocate prefix descriptors");
     }
@@ -98,7 +100,8 @@ void llama_cpp_adapter::import_prefix(const kv_prefix & prefix) {
         throw std::invalid_argument("Invalid external prefix metadata");
     }
     auto * cache = dynamic_cast<llama_kv_cache *>(context_->get_memory());
-    if (!cache) throw std::runtime_error("Understanding context cannot import attention prefixes");
+    if (!cache)
+        throw std::runtime_error("Understanding context cannot import attention prefixes");
     reset();
     if (!cache->import_prefix(context_.get(), 0, positions, prefix.keys, prefix.values)) {
         throw std::runtime_error("Could not import attention prefix");

@@ -18,7 +18,7 @@ void hierarchy_capture::begin(ggml_backend_t target, ggml_cgraph * graph, const 
                 const auto * node = ggml_graph_node(graph, i);
                 const auto op = node->op;
                 const bool metadata = op == GGML_OP_NONE || op == GGML_OP_VIEW || op == GGML_OP_RESHAPE ||
-                    op == GGML_OP_PERMUTE || op == GGML_OP_TRANSPOSE;
+                                      op == GGML_OP_PERMUTE || op == GGML_OP_TRANSPOSE;
                 if (!metadata && (node->flags & GGML_TENSOR_FLAG_COMPUTE) && !ggml_is_empty(node)) {
                     plan.push_back({i + 1, ggml_op_name(op)});
                 }
@@ -102,7 +102,8 @@ json hierarchy_capture::finish(ggml_backend_t target) {
     backend = nullptr;
     current = nullptr;
     if (!armed) {
-        return {{"status", "unavailable"}, {"reason", plan.empty() ? "unrecognized_boundaries" : "timing_backend_unavailable"}};
+        return {{"status", "unavailable"},
+                {"reason", plan.empty() ? "unrecognized_boundaries" : "timing_backend_unavailable"}};
     }
     armed = false;
     std::vector<ggml_backend_timing_sample> intervals(plan.size());
@@ -128,7 +129,8 @@ json hierarchy_capture::finish(ggml_backend_t target) {
             ++next;
         }
         const bool valid = std::isfinite(sample.elapsed_ms) && sample.elapsed_ms >= 0;
-        json span = {{"node_range", {begin, sample.end}}, {"labels", std::move(labels)},
+        json span = {{"node_range", {begin, sample.end}},
+                     {"labels", std::move(labels)},
                      {"elapsed_ms", valid ? json(sample.elapsed_ms) : json(nullptr)}};
         if (!valid) {
             partial = true;
@@ -140,7 +142,8 @@ json hierarchy_capture::finish(ggml_backend_t target) {
     if (begin != plan.back().end) {
         throw std::runtime_error("Incomplete backend timing range");
     }
-    return {{"status", partial ? "partial" : "completed"}, {"timing_scope", "cann_stream_events"},
+    return {{"status", partial ? "partial" : "completed"},
+            {"timing_scope", "cann_stream_events"},
             {"spans", std::move(spans)}};
 }
 

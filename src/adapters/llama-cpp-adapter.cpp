@@ -20,9 +20,10 @@ using llama_prefill_detail::record_prefill;
 // Model/context setup -------------------------------------------------------
 
 llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context_size, int gpu_layers,
-                                     bool full_precision, const std::string & backend,
-                                     int batch_size, int microbatch_size, const std::string & secondary_backend) {
-    if (backend.empty() && !secondary_backend.empty()) throw std::invalid_argument("Secondary backend requires a primary backend");
+                                     bool full_precision, const std::string & backend, int batch_size,
+                                     int microbatch_size, const std::string & secondary_backend) {
+    if (backend.empty() && !secondary_backend.empty())
+        throw std::invalid_argument("Secondary backend requires a primary backend");
     auto mp = llama_model_default_params();
     mp.n_gpu_layers = gpu_layers;
     ggml_backend_dev_t devices[3]{};
@@ -38,7 +39,8 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
         mp.main_gpu = 0;
         if (!secondary_backend.empty()) {
             devices[1] = ggml_backend_dev_by_name(secondary_backend.c_str());
-            if (!devices[1] || devices[1] == devices[0]) throw std::invalid_argument("Secondary backend must be a distinct registered device");
+            if (!devices[1] || devices[1] == devices[0])
+                throw std::invalid_argument("Secondary backend must be a distinct registered device");
             // Keep immutable weights and KV on the primary device; scheduler copies remote inputs.
             mp.split_mode = LLAMA_SPLIT_MODE_LAYER;
             mp.tensor_split = primary_weights.data();
@@ -66,15 +68,16 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
     }
     const auto & descriptor = model_descriptor_for(family_);
     auto cp = llama_context_default_params();
-    if (context_size < 0) throw std::invalid_argument("Context size must be nonnegative");
-    if (batch_size < 0 || microbatch_size < 0) throw std::invalid_argument("Batch sizes must be nonnegative");
-    const bool compact_bagel = family_ == model_family::bagel &&
-        llama_model_ftype(model_.get()) != LLAMA_FTYPE_MOSTLY_F16;
+    if (context_size < 0)
+        throw std::invalid_argument("Context size must be nonnegative");
+    if (batch_size < 0 || microbatch_size < 0)
+        throw std::invalid_argument("Batch sizes must be nonnegative");
+    const bool compact_bagel =
+        family_ == model_family::bagel && llama_model_ftype(model_.get()) != LLAMA_FTYPE_MOSTLY_F16;
     cp.n_ctx = context_size ? context_size : descriptor.context_size;
-    cp.n_batch = std::min<uint32_t>(cp.n_ctx, batch_size ? batch_size :
-                                    (compact_bagel ? 512 : descriptor.batch_size));
-    cp.n_ubatch = std::min<uint32_t>(cp.n_batch, microbatch_size ? microbatch_size :
-                                     (compact_bagel ? 256 : cp.n_batch));
+    cp.n_batch = std::min<uint32_t>(cp.n_ctx, batch_size ? batch_size : (compact_bagel ? 512 : descriptor.batch_size));
+    cp.n_ubatch =
+        std::min<uint32_t>(cp.n_batch, microbatch_size ? microbatch_size : (compact_bagel ? 256 : cp.n_batch));
     cp.kv_v_contiguous = family_ == model_family::sensenova_u1;
     cp.n_seq_max = 1;
     cp.n_threads = 8;
@@ -135,7 +138,8 @@ void llama_cpp_adapter::reset() {
 
 std::vector<ggml_tensor *> llama_cpp_adapter::weights() const {
     std::vector<ggml_tensor *> result;
-    for (const auto & item : model_->tensors_by_name) result.push_back(item.second);
+    for (const auto & item : model_->tensors_by_name)
+        result.push_back(item.second);
     return result;
 }
 
@@ -149,21 +153,25 @@ void llama_cpp_adapter::set_placement(graph_placement placement) {
         ggml_backend_sched_set_placement_callback(scheduler(), nullptr, nullptr);
         return;
     }
-    ggml_backend_sched_set_placement_callback(scheduler(), [](ggml_backend_sched_t sched,
-            ggml_cgraph * graph, bool allocated, void * user) {
-        auto & adapter = *static_cast<llama_cpp_adapter *>(user);
-        try {
-            adapter.placement_(sched, graph, allocated);
-            return true;
-        } catch (...) {
-            adapter.placement_error_ = std::current_exception();
-            return false;
-        }
-    }, this);
+    ggml_backend_sched_set_placement_callback(
+        scheduler(),
+        [](ggml_backend_sched_t sched, ggml_cgraph * graph, bool allocated, void * user) {
+            auto & adapter = *static_cast<llama_cpp_adapter *>(user);
+            try {
+                adapter.placement_(sched, graph, allocated);
+                return true;
+            } catch (...) {
+                adapter.placement_error_ = std::current_exception();
+                return false;
+            }
+        },
+        this);
 }
 
 int llama_cpp_adapter::decode_profiled(llama_batch batch, const char * phase) {
-    profiling::phase_scope scope(std::string(profiling::current_phase.phase) == "understanding_decode" ? "understanding_decode" : phase, batch.n_tokens, tokens_.size());
+    profiling::phase_scope scope(
+        std::string(profiling::current_phase.phase) == "understanding_decode" ? "understanding_decode" : phase,
+        batch.n_tokens, tokens_.size());
     const int status = llama_decode(context_.get(), batch);
     if (placement_error_) {
         std::rethrow_exception(std::exchange(placement_error_, {}));
@@ -175,8 +183,7 @@ void llama_cpp_adapter::synchronize() {
     llama_synchronize(context_.get());
 }
 
-void llama_cpp_adapter::append(const std::vector<llama_token> & tokens, bool need_logits,
-                                request_metrics * metrics) {
+void llama_cpp_adapter::append(const std::vector<llama_token> & tokens, bool need_logits, request_metrics * metrics) {
     if (tokens_.size() + tokens.size() > llama_n_ctx(context_.get())) {
         throw std::runtime_error("Understanding context is full");
     }
@@ -187,7 +194,7 @@ void llama_cpp_adapter::append(const std::vector<llama_token> & tokens, bool nee
     const auto batch_limit = std::min<uint32_t>(llama_n_batch(context_.get()), descriptor.batch_size);
     for (size_t offset = 0; offset < tokens.size();) {
         const int n = std::min<size_t>(batch_limit, tokens.size() - offset);
-        std::vector<llama_pos> positions(4*n, 0);
+        std::vector<llama_pos> positions(4 * n, 0);
         std::vector<int32_t> seq_counts(n, 1);
         llama_seq_id sequence = 0;
         std::vector<llama_seq_id *> seq_ids(n, &sequence);
@@ -203,13 +210,15 @@ void llama_cpp_adapter::append(const std::vector<llama_token> & tokens, bool nee
         batch.n_seq_id = seq_counts.data();
         batch.seq_id = seq_ids.data();
         batch.logits = outputs.data();
-        if (metrics) synchronize();
+        if (metrics)
+            synchronize();
         const auto start = metrics_clock::now();
         has_logits_ = false;
         if (decode_profiled(batch, "understanding_prefill") != 0) {
             throw std::runtime_error("Understanding decode failed");
         }
-        if (metrics) synchronize();
+        if (metrics)
+            synchronize();
         record_prefill(metrics, "text", tokens_.size(), n, outputs.back(), metrics_elapsed_ms(start));
         hash_prefill_input(metrics, batch);
         tokens_.insert(tokens_.end(), tokens.begin() + offset, tokens.begin() + offset + n);

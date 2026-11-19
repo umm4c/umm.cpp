@@ -22,8 +22,7 @@ const std::string & empty_component() {
     return empty;
 }
 
-void validate_manifest(const nlohmann::json & manifest,
-                       const model_descriptor * descriptor) {
+void validate_manifest(const nlohmann::json & manifest, const model_descriptor * descriptor) {
     const auto version = manifest.at("version").get<int>();
     const auto format = manifest.at("format").get<std::string>();
     if (format != "umm" || (version != 1 && version != 2) || descriptor == nullptr) {
@@ -31,8 +30,7 @@ void validate_manifest(const nlohmann::json & manifest,
     }
 }
 
-std::string resolve_component_path(const std::filesystem::path & root,
-                                   const std::string & name,
+std::string resolve_component_path(const std::filesystem::path & root, const std::string & name,
                                    const std::string & value) {
     namespace fs = std::filesystem;
     const fs::path relative = value;
@@ -48,9 +46,7 @@ std::string resolve_component_path(const std::filesystem::path & root,
     return path.string();
 }
 
-void load_components(const nlohmann::json & manifest,
-                     const std::filesystem::path & root,
-                     model_package & package) {
+void load_components(const nlohmann::json & manifest, const std::filesystem::path & root, model_package & package) {
     const auto add_component = [&](const std::string & name, const std::string & value) {
         package.components.emplace(name, resolve_component_path(root, name, value));
     };
@@ -67,7 +63,9 @@ void load_components(const nlohmann::json & manifest,
     }
 
     static const std::vector<std::string> metadata_keys = {
-        "format", "version", "architecture",
+        "format",
+        "version",
+        "architecture",
     };
     for (auto it = manifest.begin(); it != manifest.end(); ++it) {
         if (!it.value().is_string() ||
@@ -78,8 +76,7 @@ void load_components(const nlohmann::json & manifest,
     }
 }
 
-model_package package_from_files(const std::string & model,
-                                 const std::string & generation) {
+model_package package_from_files(const std::string & model, const std::string & generation) {
     model_package package;
     package.components.emplace(understanding_component, model);
     if (!generation.empty()) {
@@ -88,8 +85,7 @@ model_package package_from_files(const std::string & model,
     return package;
 }
 
-void require_components(const model_package & package,
-                        const model_descriptor & descriptor) {
+void require_components(const model_package & package, const model_descriptor & descriptor) {
     for (size_t i = 0; i < descriptor.required_component_count; ++i) {
         if (!package.has_component(descriptor.required_components[i])) {
             throw std::runtime_error(std::string("Model package is missing required component: ") +
@@ -115,22 +111,21 @@ bool model_package::supports(model_family resolved_family, model_capability capa
     }
 
     switch (capability) {
-        case model_capability::text:
-            return has_component(understanding_component);
-        case model_capability::image:
-            return has_component(generation_component) &&
-                   (resolved_family != model_family::bagel || has_component(vae_component));
-        case model_capability::understand:
-            // U1 keeps its vision encoder in the generation GGUF. BAGEL uses
-            // a separate vision projector component.
-            return resolved_family == model_family::sensenova_u1
-                       ? has_component(generation_component)
-                       : has_component(vision_component);
-        case model_capability::edit:
-            return supports(resolved_family, model_capability::image) &&
-                   supports(resolved_family, model_capability::understand);
-        case model_capability::image_guidance:
-            return supports(resolved_family, model_capability::edit);
+    case model_capability::text:
+        return has_component(understanding_component);
+    case model_capability::image:
+        return has_component(generation_component) &&
+               (resolved_family != model_family::bagel || has_component(vae_component));
+    case model_capability::understand:
+        // U1 keeps its vision encoder in the generation GGUF. BAGEL uses
+        // a separate vision projector component.
+        return resolved_family == model_family::sensenova_u1 ? has_component(generation_component)
+                                                             : has_component(vision_component);
+    case model_capability::edit:
+        return supports(resolved_family, model_capability::image) &&
+               supports(resolved_family, model_capability::understand);
+    case model_capability::image_guidance:
+        return supports(resolved_family, model_capability::edit);
     }
     return false;
 }

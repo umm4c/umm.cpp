@@ -17,12 +17,13 @@ static const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq
 
 umm::image_input read_image_data_url(const std::string & value, size_t max_pixels) {
     const auto comma = value.find(',');
-    if (comma == std::string::npos || (value.substr(0, comma) != "data:image/png;base64" &&
-        value.substr(0, comma) != "data:image/jpeg;base64")) {
+    if (comma == std::string::npos ||
+        (value.substr(0, comma) != "data:image/png;base64" && value.substr(0, comma) != "data:image/jpeg;base64")) {
         throw std::invalid_argument("Expected a PNG or JPEG base64 data URL");
     }
     const auto length = value.size() - comma - 1;
-    if (!length || length % 4 || length > 128 * 1024 * 1024) throw std::invalid_argument("Invalid image base64 length");
+    if (!length || length % 4 || length > 128 * 1024 * 1024)
+        throw std::invalid_argument("Invalid image base64 length");
     std::vector<unsigned char> bytes;
     bytes.reserve(length / 4 * 3);
     for (size_t i = comma + 1; i < value.size(); i += 4) {
@@ -31,12 +32,14 @@ umm::image_input read_image_data_url(const std::string & value, size_t max_pixel
         for (int k = 0; k < 4; ++k) {
             const char ch = value[i + k];
             if (ch == '=') {
-                if (k < 2 || i + 4 != value.size()) throw std::invalid_argument("Invalid image base64 padding");
+                if (k < 2 || i + 4 != value.size())
+                    throw std::invalid_argument("Invalid image base64 padding");
                 ++padding;
                 word <<= 6;
             } else {
                 const auto digit = alphabet.find(ch);
-                if (digit == std::string::npos || padding) throw std::invalid_argument("Invalid image base64 character");
+                if (digit == std::string::npos || padding)
+                    throw std::invalid_argument("Invalid image base64 character");
                 word = (word << 6) | static_cast<uint32_t>(digit);
             }
         }
@@ -44,17 +47,20 @@ umm::image_input read_image_data_url(const std::string & value, size_t max_pixel
             throw std::invalid_argument("Invalid image base64 tail");
         }
         bytes.push_back(word >> 16);
-        if (padding < 2) bytes.push_back(word >> 8);
-        if (!padding) bytes.push_back(word);
+        if (padding < 2)
+            bytes.push_back(word >> 8);
+        if (!padding)
+            bytes.push_back(word);
     }
     int width = 0, height = 0, channels = 0;
     if (bytes.size() > size_t(std::numeric_limits<int>::max()) ||
-        !stbi_info_from_memory(bytes.data(), int(bytes.size()), &width, &height, &channels) ||
-        width <= 0 || height <= 0 || size_t(width) > max_pixels / size_t(height)) {
+        !stbi_info_from_memory(bytes.data(), int(bytes.size()), &width, &height, &channels) || width <= 0 ||
+        height <= 0 || size_t(width) > max_pixels / size_t(height)) {
         throw std::invalid_argument("Invalid image or decoded pixel limit exceeded");
     }
     unsigned char * pixels = stbi_load_from_memory(bytes.data(), int(bytes.size()), &width, &height, &channels, 3);
-    if (!pixels) throw std::invalid_argument("Could not decode image data");
+    if (!pixels)
+        throw std::invalid_argument("Could not decode image data");
     umm::image_input result{width, height, std::vector<uint8_t>(pixels, pixels + size_t(width) * height * 3)};
     stbi_image_free(pixels);
     return result;
@@ -73,7 +79,7 @@ std::string png_base64(const umm::image_result & image) {
     if (!stbi_write_png_to_func(append, &bytes, image.width, image.height, 3, image.rgb.data(), image.width * 3)) {
         throw std::runtime_error("Could not encode PNG");
     }
-    return ::base64::encode(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+    return ::base64::encode(reinterpret_cast<const char *>(bytes.data()), bytes.size());
 }
 
 umm::image_input read_image(const std::filesystem::path & path) {
@@ -86,8 +92,7 @@ umm::image_input read_image(const std::filesystem::path & path) {
         stbi_image_free(pixels);
         throw std::runtime_error("Could not read image: " + path.string() + ": " + reason);
     }
-    umm::image_input result{width, height,
-        std::vector<uint8_t>(pixels, pixels + size_t(width) * height * 3)};
+    umm::image_input result{width, height, std::vector<uint8_t>(pixels, pixels + size_t(width) * height * 3)};
     stbi_image_free(pixels);
     return result;
 }
@@ -97,8 +102,7 @@ void write_png(const std::filesystem::path & path, const umm::image_result & ima
     if (image.width <= 0 || image.height <= 0 || image.rgb.size() != expected_size) {
         throw std::runtime_error("Image result has invalid dimensions or pixel data");
     }
-    if (!stbi_write_png(path.string().c_str(), image.width, image.height, 3,
-                        image.rgb.data(), image.width * 3)) {
+    if (!stbi_write_png(path.string().c_str(), image.width, image.height, 3, image.rgb.data(), image.width * 3)) {
         throw std::runtime_error("Could not write image: " + path.string());
     }
 }

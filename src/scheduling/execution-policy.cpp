@@ -14,7 +14,8 @@ std::set<std::string> remote_cann_devices;
 }
 
 bool backend_uses_cann(const std::string & name) {
-    if (name.rfind("CANN", 0) == 0 || name.rfind("cann", 0) == 0) return true;
+    if (name.rfind("CANN", 0) == 0 || name.rfind("cann", 0) == 0)
+        return true;
     std::lock_guard<std::mutex> lock(registry_mutex);
     return remote_cann_devices.count(name) != 0;
 }
@@ -23,15 +24,18 @@ std::string register_remote_cann(const std::string & endpoint) {
     ggml_backend_load_all();
     std::lock_guard<std::mutex> lock(registry_mutex);
     auto rpc = ggml_backend_reg_by_name("RPC");
-    if (!rpc) throw std::runtime_error("RPC backend is unavailable; rebuild with GGML_RPC=ON");
+    if (!rpc)
+        throw std::runtime_error("RPC backend is unavailable; rebuild with GGML_RPC=ON");
     using add_server = ggml_backend_reg_t (*)(const char *);
     auto add = reinterpret_cast<add_server>(ggml_backend_reg_get_proc_address(rpc, "ggml_backend_rpc_add_server"));
-    if (!add) throw std::runtime_error("RPC registration API is unavailable");
+    if (!add)
+        throw std::runtime_error("RPC registration API is unavailable");
     auto reg = add(endpoint.c_str());
     if (!reg || ggml_backend_reg_dev_count(reg) != 1) {
         throw std::runtime_error("RPC requires a worker exposing exactly one CANN device");
     }
-    if (registered_endpoints.insert(endpoint).second) ggml_backend_register(reg);
+    if (registered_endpoints.insert(endpoint).second)
+        ggml_backend_register(reg);
     std::string selected = ggml_backend_dev_name(ggml_backend_reg_dev_get(reg, 0));
     // The worker is pinned to CANN/910B by the deployment manifest, not RPC device properties.
     remote_cann_devices.insert(selected);
@@ -40,14 +44,14 @@ std::string register_remote_cann(const std::string & endpoint) {
 
 namespace policy_options {
 
-std::string get(const execution_options & options, const std::string & key,
-                const std::string & fallback) {
+std::string get(const execution_options & options, const std::string & key, const std::string & fallback) {
     const auto it = options.find(key);
     return it == options.end() ? fallback : it->second;
 }
 
 void environment(const char * name, const std::string & value) {
-    if (setenv(name, value.c_str(), 1)) throw std::runtime_error(std::string("Cannot set ") + name);
+    if (setenv(name, value.c_str(), 1))
+        throw std::runtime_error(std::string("Cannot set ") + name);
 }
 
 void require(execution_options & options, const std::string & key, const std::string & value) {
@@ -95,7 +99,8 @@ void configure_devices(execution_options & options, const std::string & selected
 
 void require_execution_device(const std::string & selected) {
     if (const char * previous = std::getenv("GGML_REQUIRED_DEVICE")) {
-        if (selected != previous) throw std::invalid_argument("A process cannot change its static execution device");
+        if (selected != previous)
+            throw std::invalid_argument("A process cannot change its static execution device");
     }
 }
 
@@ -106,7 +111,9 @@ understanding_schedule configure_execution_policy(execution_options & options) {
     static const remote_910b_policy remote;
     static const random_policy random;
     static const std::map<std::string, const execution_policy *> policies = {
-        {"local_310p", &local}, {"remote_910b", &remote}, {"random", &random},
+        {"local_310p", &local},
+        {"remote_910b", &remote},
+        {"random", &random},
     };
     const auto name = policy_options::get(options, "--execution-policy");
     if (name != "random" && (options.count("--policy-seed") || options.count("--policy-cuts"))) {

@@ -70,7 +70,7 @@ target_include_directories(umm-runtime PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/llama.cpp/vendor/hash/sha256"
     PRIVATE src)
 target_link_libraries(umm-runtime PUBLIC umm ggml Threads::Threads PRIVATE vendor::hash umm-scheduling)
-add_executable(umm-session src/apps/bench-session.cpp)
+add_executable(umm-session src/apps/jsonl-session.cpp)
 add_executable(umm-server src/apps/server.cpp)
 target_include_directories(umm-server PRIVATE src)
 target_link_libraries(umm-server PRIVATE umm-runtime)

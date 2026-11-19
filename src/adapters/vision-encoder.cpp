@@ -21,7 +21,8 @@ image_input prepare_bagel_image(const image_input & image) {
     return {prepared.get_size().width, prepared.get_size().height, prepared.get_ro_buf()};
 }
 
-bagel_vision_encoder::bagel_vision_encoder(const std::string & path, const std::string & backend) : context_(nullptr, clip_free) {
+bagel_vision_encoder::bagel_vision_encoder(const std::string & path, const std::string & backend)
+    : context_(nullptr, clip_free) {
     clip_context_params params{};
     params.use_gpu = true;
     if (!backend.empty()) {
@@ -30,9 +31,7 @@ bagel_vision_encoder::bagel_vision_encoder(const std::string & path, const std::
             throw std::runtime_error("Vision backend was not found: " + backend);
         }
     }
-    params.flash_attn_type = backend_uses_cann(backend)
-        ? CLIP_FLASH_ATTN_TYPE_DISABLED
-        : CLIP_FLASH_ATTN_TYPE_ENABLED;
+    params.flash_attn_type = backend_uses_cann(backend) ? CLIP_FLASH_ATTN_TYPE_DISABLED : CLIP_FLASH_ATTN_TYPE_ENABLED;
     const auto loaded = clip_init(path.c_str(), params);
     context_.reset(loaded.ctx_v);
     clip_free(loaded.ctx_a);
@@ -48,7 +47,8 @@ std::vector<float> bagel_vision_encoder::encode(const image_input & image) {
     input.set_size({image.width, image.height}, false);
     input.cpy_buf(image.rgb);
     const auto images = mtmd_image_preprocessor_bagel(context_.get()).preprocess(input);
-    if (images.entries.size() != 1) throw std::runtime_error("Expected one image embedding group");
+    if (images.entries.size() != 1)
+        throw std::runtime_error("Expected one image embedding group");
     std::vector<float> embeddings(size_t(clip_n_output_tokens(context_.get(), &images.entries.front())) *
                                   clip_n_mmproj_embd(context_.get()));
     if (!clip_image_encode(context_.get(), 8, &images.entries.front(), embeddings)) {

@@ -22,8 +22,7 @@ class hierarchy_capture {
     bool armed = false;
 
 public:
-    void begin(ggml_backend_t target, ggml_cgraph * graph, const std::string & graph_id,
-               const std::string & level);
+    void begin(ggml_backend_t target, ggml_cgraph * graph, const std::string & graph_id, const std::string & level);
     nlohmann::json finish(ggml_backend_t target);
     void cancel();
 };

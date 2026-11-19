@@ -25,7 +25,10 @@ void decode_bagel_reasoning(llama_cpp_adapter & engine, image_result & result, i
         }
         result.reasoning += piece;
         result.reasoning_tokens.push_back(token);
-        { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
+        {
+            profiling::phase_scope phase("understanding_decode");
+            engine.append({token});
+        }
     }
     engine.append(engine.tokenize("<|im_end|>"));
 }
@@ -36,7 +39,8 @@ std::string decode_bagel_answer(workflow_context & context, int max_tokens, bool
     auto & engine = context.language_model;
     std::string result;
     bool in_reasoning = false;
-    if (context.metrics) context.metrics->finish_reason = "length";
+    if (context.metrics)
+        context.metrics->finish_reason = "length";
     for (int i = 0; i < max_tokens; ++i) {
         const auto token = engine.greedy();
         const auto piece = engine.piece(token);
@@ -51,7 +55,10 @@ std::string decode_bagel_answer(workflow_context & context, int max_tokens, bool
         if (engine.is_end(token)) {
             break;
         }
-        { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
+        {
+            profiling::phase_scope phase("understanding_decode");
+            engine.append({token});
+        }
     }
     return result;
 }
@@ -82,14 +89,15 @@ public:
         return "<|im_start|>" + prompt + "<|im_end|><|im_start|>";
     }
 
-    std::string understand(workflow_context & context, const image_input & image,
-                            const std::string & prompt, int max_tokens, bool think) override {
+    std::string understand(workflow_context & context, const image_input & image, const std::string & prompt,
+                           int max_tokens, bool think) override {
         if (max_tokens < 1) {
             throw std::invalid_argument("max_tokens must be positive");
         }
         auto & engine = context.language_model;
         engine.reset();
-        if (think) engine.append(engine.tokenize(bagel_reasoning_prompt(false)));
+        if (think)
+            engine.append(engine.tokenize(bagel_reasoning_prompt(false)));
         context.append_bagel_image(image);
         engine.append(engine.tokenize("<|im_start|>" + prompt + "<|im_end|><|im_start|>"));
         begin_text_decode(context);
@@ -98,20 +106,22 @@ public:
         return answer;
     }
 
-    image_result generate(workflow_context & context, const std::string & prompt,
-                          const image_options & requested, const image_input * input) override {
+    image_result generate(workflow_context & context, const std::string & prompt, const image_options & requested,
+                          const image_input * input) override {
         const auto options = normalize_image_options(family(), requested);
         auto & diffusion = context.diffusion();
         auto & engine = context.language_model;
 
         if (!input && options.guidance > 1) {
             engine.reset();
-            if (options.think) engine.append(engine.tokenize(bagel_reasoning_prompt(true)));
+            if (options.think)
+                engine.append(engine.tokenize(bagel_reasoning_prompt(true)));
             context.transfer_prefix(conditioning_slot::without_text);
         }
 
         engine.reset();
-        if (options.think) engine.append(engine.tokenize(bagel_reasoning_prompt(true)));
+        if (options.think)
+            engine.append(engine.tokenize(bagel_reasoning_prompt(true)));
         if (input) {
             context.append_latent_image(*input, options.seed);
             context.append_bagel_image(*input);
@@ -120,7 +130,8 @@ public:
             }
         }
         engine.append(engine.tokenize("<|im_start|>" + prompt + "<|im_end|>"));
-        if (options.think) engine.append(engine.tokenize("<|im_start|>"));
+        if (options.think)
+            engine.append(engine.tokenize("<|im_start|>"));
 
         image_result result{options.width, options.height, {}, {}, {}, {}};
         if (options.think) {
@@ -131,7 +142,8 @@ public:
 
         if (input && options.guidance > 1 && options.image_guidance > 1) {
             engine.reset();
-            if (options.think) engine.append(engine.tokenize(bagel_reasoning_prompt(true)));
+            if (options.think)
+                engine.append(engine.tokenize(bagel_reasoning_prompt(true)));
             engine.append(engine.tokenize("<|im_start|>" + prompt + "<|im_end|>"));
             if (options.think) {
                 engine.append(engine.tokenize("<|im_start|>"));
@@ -143,8 +155,7 @@ public:
 
         const float image_guidance = input && options.guidance > 1 ? options.image_guidance : 1.f;
         finish_conditioning(context, result.prefix_tokens.size());
-        return diffusion.generate(prompt, options,
-                                      image_guidance, std::move(result), context.metrics);
+        return diffusion.generate(prompt, options, image_guidance, std::move(result), context.metrics);
     }
 };
 

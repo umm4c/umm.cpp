@@ -38,16 +38,37 @@ std::map<std::string, std::string> parse_options(int argc, char ** argv) {
         }
     }
     static const std::map<std::string, bool> allowed = {
-        {"--execution-policy", true}, {"--rpc-endpoint", true}, {"--local-device", true}, {"--policy-seed", true}, {"--policy-cuts", true},
-        {"--model", true}, {"--understanding-backend", true}, {"--vision-backend", true},
-        {"--generation-backend", true}, {"--generation-max-vram", true},
-        {"--steps", true}, {"--cfg", true}, {"--image-cfg", true}, {"--shift", true},
-        {"--vae-tiling", true}, {"--vae-tile-size", true}, {"--vae-tile-overlap", true},
-        {"--n-ctx", true}, {"--n-batch", true}, {"--n-ubatch", true},
+        {"--execution-policy", true},
+        {"--rpc-endpoint", true},
+        {"--local-device", true},
+        {"--policy-seed", true},
+        {"--policy-cuts", true},
+        {"--model", true},
+        {"--understanding-backend", true},
+        {"--vision-backend", true},
+        {"--generation-backend", true},
+        {"--generation-max-vram", true},
+        {"--steps", true},
+        {"--cfg", true},
+        {"--image-cfg", true},
+        {"--shift", true},
+        {"--vae-tiling", true},
+        {"--vae-tile-size", true},
+        {"--vae-tile-overlap", true},
+        {"--n-ctx", true},
+        {"--n-batch", true},
+        {"--n-ubatch", true},
         {"--cann-q8-nz", true},
-        {"--monitoring", true}, {"--monitor-interval", true}, {"--system-samples", true},
-        {"--request-log", true}, {"--metrics-port", true}, {"--host", true},
-        {"--port", true}, {"--served-model-name", true}, {"--api-key-env", true}, {"--hash-model", true},
+        {"--monitoring", true},
+        {"--monitor-interval", true},
+        {"--system-samples", true},
+        {"--request-log", true},
+        {"--metrics-port", true},
+        {"--host", true},
+        {"--port", true},
+        {"--served-model-name", true},
+        {"--api-key-env", true},
+        {"--hash-model", true},
     };
     for (const auto & item : options) {
         if (!allowed.count(item.first)) {
@@ -60,14 +81,13 @@ std::map<std::string, std::string> parse_options(int argc, char ** argv) {
     return options;
 }
 
-std::string option(const std::map<std::string, std::string> & options,
-                   const std::string & key, const std::string & fallback) {
+std::string option(const std::map<std::string, std::string> & options, const std::string & key,
+                   const std::string & fallback) {
     const auto found = options.find(key);
     return found == options.end() ? fallback : found->second;
 }
 
-template <typename T>
-T required(const json & object, const char * key) {
+template <typename T> T required(const json & object, const char * key) {
     if (!object.is_object() || !object.contains(key)) {
         throw std::invalid_argument(std::string("Missing field: ") + key);
     }
@@ -78,8 +98,12 @@ double elapsed_ms(clock_type::time_point start) {
     return std::chrono::duration<double, std::milli>(clock_type::now() - start).count();
 }
 
-json available(double value) { return value < 0 ? json(nullptr) : json(value); }
-json available(int64_t value) { return value < 0 ? json(nullptr) : json(value); }
+json available(double value) {
+    return value < 0 ? json(nullptr) : json(value);
+}
+json available(int64_t value) {
+    return value < 0 ? json(nullptr) : json(value);
+}
 
 json timings(const umm::request_metrics & metrics, clock_type::time_point start) {
     return {{"end_to_end", elapsed_ms(start)},
@@ -103,19 +127,24 @@ json timings(const umm::request_metrics & metrics, clock_type::time_point start)
 }
 
 json prefill_metrics(const umm::request_metrics & metrics) {
-    if (metrics.prefill_batches.empty()) return nullptr;
+    if (metrics.prefill_batches.empty())
+        return nullptr;
     json batches = json::array();
     int64_t outputs = 0;
     for (const auto & batch : metrics.prefill_batches) {
-        batches.push_back({{"kind", batch.kind}, {"tokens", batch.tokens},
-                           {"cached_tokens", batch.cached_tokens}, {"outputs", batch.outputs},
+        batches.push_back({{"kind", batch.kind},
+                           {"tokens", batch.tokens},
+                           {"cached_tokens", batch.cached_tokens},
+                           {"outputs", batch.outputs},
                            {"elapsed_ms", batch.elapsed_ms}});
         outputs += batch.outputs;
     }
-    return {{"call_count", batches.size()}, {"logits_rows", outputs},
+    return {{"call_count", batches.size()},
+            {"logits_rows", outputs},
             {"attention_mode_switches", metrics.attention_mode_switches},
             {"input_hash_algorithm", "fnv1a64-token-position"},
-            {"input_hash", std::to_string(metrics.prefill_input_hash)}, {"batches", batches}};
+            {"input_hash", std::to_string(metrics.prefill_input_hash)},
+            {"batches", batches}};
 }
 
 json token_counts(const umm::request_metrics & metrics) {
@@ -125,17 +154,20 @@ json token_counts(const umm::request_metrics & metrics) {
 }
 
 json backend_devices(const std::string & requested) {
-    if (requested.empty()) return nullptr;
+    if (requested.empty())
+        return nullptr;
     json devices = json::array();
     size_t offset = 0;
     while (offset < requested.size()) {
         const auto end = requested.find('&', offset);
         const auto name = requested.substr(offset, end == std::string::npos ? end : end - offset);
         auto * device = ggml_backend_dev_by_name(name.c_str());
-        if (!device) throw std::runtime_error("Unknown backend device: " + name);
-        devices.push_back({{"name", ggml_backend_dev_name(device)},
-                           {"description", ggml_backend_dev_description(device)}});
-        if (end == std::string::npos) break;
+        if (!device)
+            throw std::runtime_error("Unknown backend device: " + name);
+        devices.push_back(
+            {{"name", ggml_backend_dev_name(device)}, {"description", ggml_backend_dev_description(device)}});
+        if (end == std::string::npos)
+            break;
         offset = end + 1;
     }
     return devices;
@@ -143,17 +175,20 @@ json backend_devices(const std::string & requested) {
 
 json weight_precision(const std::string & path) {
     if (std::filesystem::path(path).extension() != ".gguf") {
-        return {{"tensor_count", nullptr}, {"tensor_types", nullptr},
+        return {{"tensor_count", nullptr},
+                {"tensor_types", nullptr},
                 {"file_bytes", std::filesystem::file_size(path)},
                 {"precision_status", "unavailable"}};
     }
-    std::unique_ptr<gguf_context, decltype(&gguf_free)> context(
-        gguf_init_from_file(path.c_str(), {true, nullptr}), gguf_free);
-    if (!context) throw std::runtime_error("Could not inspect GGUF precision: " + path);
+    std::unique_ptr<gguf_context, decltype(&gguf_free)> context(gguf_init_from_file(path.c_str(), {true, nullptr}),
+                                                                gguf_free);
+    if (!context)
+        throw std::runtime_error("Could not inspect GGUF precision: " + path);
     json counts = json::object();
     for (int64_t i = 0; i < gguf_get_n_tensors(context.get()); ++i) {
         const char * type = ggml_type_name(gguf_get_tensor_type(context.get(), i));
-        if (!counts.contains(type)) counts[type] = 0;
+        if (!counts.contains(type))
+            counts[type] = 0;
         counts[type] = counts[type].get<int64_t>() + 1;
     }
     return {{"tensor_count", gguf_get_n_tensors(context.get())},
@@ -161,8 +196,8 @@ json weight_precision(const std::string & path) {
             {"file_bytes", std::filesystem::file_size(path)}};
 }
 
-json runtime_identity(const std::string & model,
-                      const std::map<std::string, std::string> & options, const std::string & secondary_backend) {
+json runtime_identity(const std::string & model, const std::map<std::string, std::string> & options,
+                      const std::string & secondary_backend) {
     const auto package = umm::resolve_model(model);
     json weights = json::object();
     for (const auto & component : package.components) {
@@ -172,21 +207,24 @@ json runtime_identity(const std::string & model,
     if (std::filesystem::is_directory(model)) {
         std::ifstream manifest(std::filesystem::path(model) / "model.json");
         const auto data = json::parse(manifest);
-        if (data.contains("merged_lora")) merged_lora = data.at("merged_lora");
+        if (data.contains("merged_lora"))
+            merged_lora = data.at("merged_lora");
     }
     const auto strict = std::getenv("GGML_SCHED_STRICT_ACCEL");
     const auto physical_device = std::getenv("UMM_PHYSICAL_DEVICE");
     const auto q8_env = std::getenv("GGML_CANN_Q8_NZ");
     std::string q8_layout = q8_env ? q8_env : "off";
-    std::transform(q8_layout.begin(), q8_layout.end(), q8_layout.begin(), [](unsigned char ch) { return std::tolower(ch); });
-    const bool q8_nz = q8_layout == "on" || q8_layout == "1" || q8_layout == "yes" ||
-                       q8_layout == "y" || q8_layout == "enable" || q8_layout == "true";
+    std::transform(q8_layout.begin(), q8_layout.end(), q8_layout.begin(),
+                   [](unsigned char ch) { return std::tolower(ch); });
+    const bool q8_nz = q8_layout == "on" || q8_layout == "1" || q8_layout == "yes" || q8_layout == "y" ||
+                       q8_layout == "enable" || q8_layout == "true";
     const auto policy = option(options, "--execution-policy");
     const bool mixed = !secondary_backend.empty();
     const bool rpc = policy == "remote_910b";
-    const bool explicit_devices = !option(options, "--understanding-backend").empty() ||
-                                  !option(options, "--generation-backend").empty();
-    const char * policy_mode = mixed ? "graph_placement" : (explicit_devices ? "explicit_backend" : "automatic_backend");
+    const bool explicit_devices =
+        !option(options, "--understanding-backend").empty() || !option(options, "--generation-backend").empty();
+    const char * policy_mode =
+        mixed ? "graph_placement" : (explicit_devices ? "explicit_backend" : "automatic_backend");
     auto understanding = backend_devices(option(options, "--understanding-backend"));
     if (mixed) {
         for (const auto & device : backend_devices(secondary_backend)) {
@@ -196,35 +234,41 @@ json runtime_identity(const std::string & model,
     return {{"architecture", package.architecture},
             {"weights", weights},
             {"merged_lora", merged_lora},
-            {"hardware", {{"physical_device", physical_device ? json(physical_device) : json(nullptr)},
-                           {"understanding", understanding},
-                           {"generation", backend_devices(option(options, "--generation-backend"))},
-                           {"vision", backend_devices(option(options, "--vision-backend"))}}},
-            {"transport", {{"kind", mixed ? "mixed" : (rpc ? "rpc" : "local")},
-                            {"endpoint", option(options, "--rpc-endpoint")},
-                            {"remote_metrics", (mixed || rpc) ? "collected_on_worker" : "not_applicable"}}},
-            {"policy", {{"name", policy}, {"static_policy", mixed ? "" : policy}, {"mode", policy_mode},
-                        {"strict_accelerator", strict != nullptr},
-                        {"generation_max_vram", option(options, "--generation-max-vram")},
-                        {"u1_prefill_mode", package.family == model_family::sensenova_u1 ? json("mixed4") : json(nullptr)},
-                        {"u1_v_cache_layout", package.family == model_family::sensenova_u1 ? json("contiguous") : json(nullptr)},
-                        {"cann_q8_nz", q8_nz}}},
-            {"build", {{"umm", UMM_BUILD_COMMIT},
-                       {"llama_cpp", UMM_LLAMA_COMMIT},
-                       {"stable_diffusion_cpp", UMM_SD_COMMIT},
-                       {"dirty", {{"umm", UMM_BUILD_DIRTY},
-                                  {"llama_cpp", UMM_LLAMA_DIRTY},
-                                  {"stable_diffusion_cpp", UMM_SD_DIRTY}}}}}};
+            {"hardware",
+             {{"physical_device", physical_device ? json(physical_device) : json(nullptr)},
+              {"understanding", understanding},
+              {"generation", backend_devices(option(options, "--generation-backend"))},
+              {"vision", backend_devices(option(options, "--vision-backend"))}}},
+            {"transport",
+             {{"kind", mixed ? "mixed" : (rpc ? "rpc" : "local")},
+              {"endpoint", option(options, "--rpc-endpoint")},
+              {"remote_metrics", (mixed || rpc) ? "collected_on_worker" : "not_applicable"}}},
+            {"policy",
+             {{"name", policy},
+              {"static_policy", mixed ? "" : policy},
+              {"mode", policy_mode},
+              {"strict_accelerator", strict != nullptr},
+              {"generation_max_vram", option(options, "--generation-max-vram")},
+              {"u1_prefill_mode", package.family == model_family::sensenova_u1 ? json("mixed4") : json(nullptr)},
+              {"u1_v_cache_layout", package.family == model_family::sensenova_u1 ? json("contiguous") : json(nullptr)},
+              {"cann_q8_nz", q8_nz}}},
+            {"build",
+             {{"umm", UMM_BUILD_COMMIT},
+              {"llama_cpp", UMM_LLAMA_COMMIT},
+              {"stable_diffusion_cpp", UMM_SD_COMMIT},
+              {"dirty",
+               {{"umm", UMM_BUILD_DIRTY}, {"llama_cpp", UMM_LLAMA_DIRTY}, {"stable_diffusion_cpp", UMM_SD_DIRTY}}}}}};
 }
 
-json run_case(umm::session & session, const json & request,
-              const std::map<std::string, std::string> & options, bool http) {
+json run_case(umm::session & session, const json & request, const std::map<std::string, std::string> & options,
+              bool http) {
     const auto start = clock_type::now();
     umm::request_metrics metrics;
     std::string case_id;
     double engine_ms = -1, output_encode_ms = -1;
     auto read_input = [&](const json & item) {
-        if (http) return umm::cli::read_image_data_url(required<std::string>(item, "data_url"));
+        if (http)
+            return umm::cli::read_image_data_url(required<std::string>(item, "data_url"));
         return umm::cli::read_image(required<std::string>(item, "path"));
     };
     try {
@@ -257,24 +301,35 @@ json run_case(umm::session & session, const json & request,
         json output;
         if (task == "mixed_understanding") {
             if (image_count != 1 || image_position != 0) {
-                return {{"type", "result"}, {"case_id", case_id}, {"status", "error"},
-                        {"error", {{"code", "unsupported_input_format"}, {"message", "Exactly one leading image is supported"}}},
-                        {"timings_ms", timings(metrics, start)}, {"token_counts", token_counts(metrics)}};
+                return {{"type", "result"},
+                        {"case_id", case_id},
+                        {"status", "error"},
+                        {"error",
+                         {{"code", "unsupported_input_format"}, {"message", "Exactly one leading image is supported"}}},
+                        {"timings_ms", timings(metrics, start)},
+                        {"token_counts", token_counts(metrics)}};
             }
             const int max_tokens = required<int>(params, "max_new_tokens");
-            if (max_tokens <= 0) throw std::invalid_argument("max_new_tokens must be positive");
+            if (max_tokens <= 0)
+                throw std::invalid_argument("max_new_tokens must be positive");
             const auto decode_start = clock_type::now();
             const auto image = read_input(content.at(0));
             metrics.image_decode_ms = elapsed_ms(decode_start);
             output = {{"type", "text"}, {"text", session.understand(image, prompt, max_tokens, false, &metrics)}};
         } else if (task == "text_generation") {
-            if (image_count) throw std::invalid_argument("Text generation expects text only");
-            output = {{"type", "text"}, {"text", session.text(prompt, required<int>(params, "max_new_tokens"), &metrics)}};
+            if (image_count)
+                throw std::invalid_argument("Text generation expects text only");
+            output = {{"type", "text"},
+                      {"text", session.text(prompt, required<int>(params, "max_new_tokens"), &metrics)}};
         } else if (task == "image_generation") {
             if (image_count != 0) {
-                return {{"type", "result"}, {"case_id", case_id}, {"status", "error"},
-                        {"error", {{"code", "unsupported_input_format"}, {"message", "Image generation expects text only"}}},
-                        {"timings_ms", timings(metrics, start)}, {"token_counts", token_counts(metrics)}};
+                return {{"type", "result"},
+                        {"case_id", case_id},
+                        {"status", "error"},
+                        {"error",
+                         {{"code", "unsupported_input_format"}, {"message", "Image generation expects text only"}}},
+                        {"timings_ms", timings(metrics, start)},
+                        {"token_counts", token_counts(metrics)}};
             }
             umm::image_options image_options;
             image_options.width = required<int>(params, "width");
@@ -292,25 +347,35 @@ json run_case(umm::session & session, const json & request,
             image_options.vae_tile_overlap = std::stof(option(options, "--vae-tile-overlap", "0.5"));
             if (!http) {
                 const auto path = std::filesystem::path(required<std::string>(request, "output_path"));
-                if (!path.is_absolute() || path.extension() != ".png") throw std::invalid_argument("output_path must be an absolute PNG path");
+                if (!path.is_absolute() || path.extension() != ".png")
+                    throw std::invalid_argument("output_path must be an absolute PNG path");
             }
-            for (const auto & field : {std::pair<const char *, const char *>{"steps", "--steps"}, {"cfg", "--cfg"}, {"shift", "--shift"}}) {
-                if (!params.contains(field.first)) continue;
-                if (!http || !params[field.first].is_number()) throw std::invalid_argument("Invalid generation override");
+            for (const auto & field :
+                 {std::pair<const char *, const char *>{"steps", "--steps"}, {"cfg", "--cfg"}, {"shift", "--shift"}}) {
+                if (!params.contains(field.first))
+                    continue;
+                if (!http || !params[field.first].is_number())
+                    throw std::invalid_argument("Invalid generation override");
                 const double value = params[field.first].get<double>();
-                if (!std::isfinite(value) || value <= 0) throw std::invalid_argument("Generation override must be positive and finite");
+                if (!std::isfinite(value) || value <= 0)
+                    throw std::invalid_argument("Generation override must be positive and finite");
                 if (std::string(field.first) == "steps") {
-                    if (!params[field.first].is_number_integer() || value > 1000) throw std::invalid_argument("Invalid step count");
+                    if (!params[field.first].is_number_integer() || value > 1000)
+                        throw std::invalid_argument("Invalid step count");
                     image_options.steps = int(value);
-                } else if (std::string(field.first) == "cfg") image_options.guidance = float(value);
-                else image_options.flow_shift = float(value);
+                } else if (std::string(field.first) == "cfg")
+                    image_options.guidance = float(value);
+                else
+                    image_options.flow_shift = float(value);
             }
             const auto image = session.image(prompt, image_options, &metrics);
             engine_ms = elapsed_ms(start);
             if (http) {
                 const auto encode_start = clock_type::now();
-                output = {{"type", "image"}, {"b64_json", umm::cli::png_base64(image)},
-                          {"width", image.width}, {"height", image.height}};
+                output = {{"type", "image"},
+                          {"b64_json", umm::cli::png_base64(image)},
+                          {"width", image.width},
+                          {"height", image.height}};
                 output_encode_ms = elapsed_ms(encode_start);
             } else {
                 const auto output_path = std::filesystem::path(required<std::string>(request, "output_path"));
@@ -320,18 +385,22 @@ json run_case(umm::session & session, const json & request,
                 std::filesystem::create_directories(output_path.parent_path());
                 const auto write_start = clock_type::now();
                 umm::cli::write_png(output_path, image);
-                std::filesystem::permissions(output_path, std::filesystem::perms::group_read |
-                    std::filesystem::perms::others_read, std::filesystem::perm_options::add);
+                std::filesystem::permissions(output_path,
+                                             std::filesystem::perms::group_read | std::filesystem::perms::others_read,
+                                             std::filesystem::perm_options::add);
                 metrics.image_write_ms = elapsed_ms(write_start);
-                output = {{"type", "image"}, {"path", output_path.string()},
-                          {"width", image.width}, {"height", image.height}};
+                output = {{"type", "image"},
+                          {"path", output_path.string()},
+                          {"width", image.width},
+                          {"height", image.height}};
             }
         } else if (task == "multimodal_prefill") {
             if (image_count == 0) {
                 throw std::invalid_argument("Multimodal prefill needs at least one image");
             }
             const int max_tokens = required<int>(params, "max_new_tokens");
-            if (max_tokens <= 0) throw std::invalid_argument("max_new_tokens must be positive");
+            if (max_tokens <= 0)
+                throw std::invalid_argument("max_new_tokens must be positive");
             std::vector<umm::understanding_segment> ordered;
             ordered.reserve(content.size());
             metrics.image_decode_ms = 0;
@@ -352,14 +421,23 @@ json run_case(umm::session & session, const json & request,
         auto timing = timings(metrics, start);
         timing["engine"] = engine_ms >= 0 ? engine_ms : elapsed_ms(start);
         timing["output_encode"] = available(output_encode_ms);
-        return {{"type", "result"}, {"case_id", case_id}, {"status", "ok"},
+        return {{"type", "result"},
+                {"case_id", case_id},
+                {"status", "ok"},
                 {"finish_reason", metrics.finish_reason},
-                {"output", output}, {"timings_ms", timing},
-                {"token_counts", token_counts(metrics)}, {"prefill", prefill_metrics(metrics)}};
+                {"output", output},
+                {"timings_ms", timing},
+                {"token_counts", token_counts(metrics)},
+                {"prefill", prefill_metrics(metrics)}};
     } catch (const std::exception & error) {
-        return {{"type", "result"}, {"case_id", case_id}, {"status", "error"},
-                {"error", {{"code", dynamic_cast<const std::invalid_argument *>(&error) ? "invalid_request" : "request_failed"}, {"message", error.what()}}},
-                {"timings_ms", timings(metrics, start)}, {"token_counts", token_counts(metrics)},
+        return {{"type", "result"},
+                {"case_id", case_id},
+                {"status", "error"},
+                {"error",
+                 {{"code", dynamic_cast<const std::invalid_argument *>(&error) ? "invalid_request" : "request_failed"},
+                  {"message", error.what()}}},
+                {"timings_ms", timings(metrics, start)},
+                {"token_counts", token_counts(metrics)},
                 {"prefill", prefill_metrics(metrics)}};
     }
 }

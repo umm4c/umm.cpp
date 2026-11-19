@@ -27,14 +27,16 @@ image_input resize_rgb_image(const image_input & image, int width, int height) {
     }
     image_input result{width, height, std::vector<uint8_t>(size_t(width) * height * 3)};
     for (int y = 0; y < height; ++y) {
-        const float source_y = height == 1 ? 0.f :
-            static_cast<float>(y) * static_cast<float>(image.height - 1) / static_cast<float>(height - 1);
+        const float source_y =
+            height == 1 ? 0.f
+                        : static_cast<float>(y) * static_cast<float>(image.height - 1) / static_cast<float>(height - 1);
         const int y0 = static_cast<int>(std::floor(source_y));
         const int y1 = std::min(y0 + 1, image.height - 1);
         const float fy = source_y - static_cast<float>(y0);
         for (int x = 0; x < width; ++x) {
-            const float source_x = width == 1 ? 0.f :
-                static_cast<float>(x) * static_cast<float>(image.width - 1) / static_cast<float>(width - 1);
+            const float source_x = width == 1 ? 0.f
+                                              : static_cast<float>(x) * static_cast<float>(image.width - 1) /
+                                                    static_cast<float>(width - 1);
             const int x0 = static_cast<int>(std::floor(source_x));
             const int x1 = std::min(x0 + 1, image.width - 1);
             const float fx = source_x - static_cast<float>(x0);
@@ -113,8 +115,7 @@ std::string u1_text_prompt(const std::string & user) {
 }
 
 std::string u1_image_prompt(const std::string & user, bool think) {
-    return u1_chat_prompt(user, u1_generation_system_prompt) +
-           (think ? "<think>\n" : "<think>\n\n</think>\n\n<img>");
+    return u1_chat_prompt(user, u1_generation_system_prompt) + (think ? "<think>\n" : "<think>\n\n</think>\n\n<img>");
 }
 
 std::string u1_unconditional_prompt() {
@@ -131,24 +132,26 @@ void decode_u1_reasoning(llama_cpp_adapter & engine, image_result & result, int 
         }
         result.reasoning += piece;
         result.reasoning_tokens.push_back(token);
-        { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
+        {
+            profiling::phase_scope phase("understanding_decode");
+            engine.append({token});
+        }
     }
     engine.append(engine.tokenize("\n\n<img>"));
 }
 
 // U1 image-generation prompt fragments.
-void append_u1_edit_prefix(llama_cpp_adapter & engine, workflow_context & context,
-                           const image_input & image, const std::string & prompt) {
-    engine.append(engine.tokenize("<|im_start|>system\n" + u1_generation_system_prompt +
-                                  "<|im_end|>\n<|im_start|>user\n"));
+void append_u1_edit_prefix(llama_cpp_adapter & engine, workflow_context & context, const image_input & image,
+                           const std::string & prompt) {
+    engine.append(
+        engine.tokenize("<|im_start|>system\n" + u1_generation_system_prompt + "<|im_end|>\n<|im_start|>user\n"));
     context.append_u1_image(image);
     engine.append(engine.tokenize("\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"));
 }
 
-void append_u1_image_only_prefix(llama_cpp_adapter & engine, workflow_context & context,
-                                 const image_input & image) {
-    engine.append(engine.tokenize("<|im_start|>system\n" + u1_generation_system_prompt +
-                                  "<|im_end|>\n<|im_start|>user\n"));
+void append_u1_image_only_prefix(llama_cpp_adapter & engine, workflow_context & context, const image_input & image) {
+    engine.append(
+        engine.tokenize("<|im_start|>system\n" + u1_generation_system_prompt + "<|im_end|>\n<|im_start|>user\n"));
     context.append_u1_image(image);
     engine.append(engine.tokenize("\n<|im_end|>\n<|im_start|>assistant\n"));
 }
@@ -157,46 +160,42 @@ class u1_workflow final : public model_workflow {
 public:
     model_family family() const override { return model_family::sensenova_u1; }
 
-    image_input prepare_image(const image_input & image) const override {
-        return prepare_u1_input(image);
-    }
+    image_input prepare_image(const image_input & image) const override { return prepare_u1_input(image); }
 
-    std::string text_prompt(const std::string & prompt) const override {
-        return u1_text_prompt(prompt);
-    }
+    std::string text_prompt(const std::string & prompt) const override { return u1_text_prompt(prompt); }
 
-    std::string understand(workflow_context & context, const image_input & image,
-                            const std::string & prompt, int max_tokens, bool think) override {
+    std::string understand(workflow_context & context, const image_input & image, const std::string & prompt,
+                           int max_tokens, bool think) override {
         return understand_content(context, {image, "\n" + prompt}, max_tokens, think);
     }
 
-    std::string understand_sequence(workflow_context & context,
-                                    const std::vector<understanding_segment> & content,
+    std::string understand_sequence(workflow_context & context, const std::vector<understanding_segment> & content,
                                     int max_tokens) override {
         return understand_content(context, content, max_tokens, false);
     }
 
-    std::string understand_content(workflow_context & context,
-                                   const std::vector<understanding_segment> & content,
+    std::string understand_content(workflow_context & context, const std::vector<understanding_segment> & content,
                                    int max_tokens, bool think) {
         if (max_tokens < 1) {
             throw std::invalid_argument("max_tokens must be positive");
         }
         auto & engine = context.language_model;
-        size_t required_tokens = engine.tokenize("<|im_start|>user\n<|im_end|>\n<|im_start|>assistant\n"
-                                                 "<think>\n\n</think>\n\n").size() +
+        size_t required_tokens = engine
+                                     .tokenize("<|im_start|>user\n<|im_end|>\n<|im_start|>assistant\n"
+                                               "<think>\n\n</think>\n\n")
+                                     .size() +
                                  size_t(max_tokens) * (think ? 2 : 1) + 16;
         for (const auto & segment : content) {
             if (const auto * image = std::get_if<image_input>(&segment)) {
-                required_tokens += size_t(image->width / u1_rules::image_stride) * (image->height / u1_rules::image_stride) + 2;
+                required_tokens +=
+                    size_t(image->width / u1_rules::image_stride) * (image->height / u1_rules::image_stride) + 2;
             } else {
                 required_tokens += engine.tokenize(std::get<std::string>(segment)).size();
             }
         }
         if (required_tokens > engine.context_capacity()) {
-            throw std::invalid_argument("Ordered multimodal input needs " +
-                                        std::to_string(required_tokens) + " tokens; context has " +
-                                        std::to_string(engine.context_capacity()));
+            throw std::invalid_argument("Ordered multimodal input needs " + std::to_string(required_tokens) +
+                                        " tokens; context has " + std::to_string(engine.context_capacity()));
         }
         engine.reset();
         constexpr int images_per_prefill = 4;
@@ -204,7 +203,8 @@ public:
         int pending_images = 0;
         std::vector<llama_token> pending_tokens;
         auto flush = [&](bool final) {
-            if (!pending_tokens.empty()) pending_segments.push_back({std::move(pending_tokens), {}, 0, 0});
+            if (!pending_tokens.empty())
+                pending_segments.push_back({std::move(pending_tokens), {}, 0, 0});
             engine.append_u1_mixed(pending_segments, final, context.metrics);
             pending_segments.clear();
             pending_images = 0;
@@ -212,7 +212,8 @@ public:
         };
         auto append_tokens = [&](const std::vector<llama_token> & tokens, bool final = false) {
             pending_tokens.insert(pending_tokens.end(), tokens.begin(), tokens.end());
-            if (final) flush(true);
+            if (final)
+                flush(true);
         };
         append_tokens(engine.tokenize("<|im_start|>user\n"));
         std::string pending_text;
@@ -222,12 +223,15 @@ public:
                     append_tokens(engine.tokenize(pending_text));
                     pending_text.clear();
                 }
-                if (pending_images == images_per_prefill) flush(false);
+                if (pending_images == images_per_prefill)
+                    flush(false);
                 append_tokens(engine.tokenize(u1_rules::image_start));
                 pending_segments.push_back({std::move(pending_tokens), {}, 0, 0});
                 pending_tokens.clear();
-                pending_segments.push_back({{}, context.encode_u1_prefill_image(*image),
-                                             image->width / u1_rules::image_stride, image->height / u1_rules::image_stride});
+                pending_segments.push_back({{},
+                                            context.encode_u1_prefill_image(*image),
+                                            image->width / u1_rules::image_stride,
+                                            image->height / u1_rules::image_stride});
                 ++pending_images;
                 append_tokens(engine.tokenize(u1_rules::image_end));
             } else {
@@ -245,7 +249,10 @@ public:
                 if (engine.is_end(token) || piece == "</think>") {
                     break;
                 }
-                { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
+                {
+                    profiling::phase_scope phase("understanding_decode");
+                    engine.append({token});
+                }
             }
             engine.append(engine.tokenize("\n\n"));
         } else {
@@ -253,7 +260,8 @@ public:
             begin_text_decode(context);
         }
         std::string result;
-        if (context.metrics) context.metrics->finish_reason = "length";
+        if (context.metrics)
+            context.metrics->finish_reason = "length";
         for (int i = 0; i < max_tokens; ++i) {
             const auto token = engine.greedy();
             note_text_token(context, engine.is_end(token));
@@ -261,14 +269,17 @@ public:
                 break;
             }
             result += engine.piece(token);
-            { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
+            {
+                profiling::phase_scope phase("understanding_decode");
+                engine.append({token});
+            }
         }
         finish_text_decode(context);
         return result;
     }
 
-    image_result generate(workflow_context & context, const std::string & prompt,
-                          const image_options & requested, const image_input * input) override {
+    image_result generate(workflow_context & context, const std::string & prompt, const image_options & requested,
+                          const image_input * input) override {
         const auto options = normalize_image_options(family(), requested);
         auto & diffusion = context.diffusion();
         auto & engine = context.language_model;
@@ -322,15 +333,12 @@ public:
         }
 
         finish_conditioning(context, result.prefix_tokens.size());
-        return diffusion.generate(
-            prompt, options,
-            input && options.guidance > 1 ? options.image_guidance : 0.f,
-            std::move(result), context.metrics);
+        return diffusion.generate(prompt, options, input && options.guidance > 1 ? options.image_guidance : 0.f,
+                                  std::move(result), context.metrics);
     }
 
     interleave_result interleave(workflow_context & context, const std::string & prompt,
-                                const image_options & requested, int max_text_tokens,
-                                int max_images) override {
+                                 const image_options & requested, int max_text_tokens, int max_images) override {
         if (max_text_tokens < 1 || max_images < 1) {
             throw std::invalid_argument("max_text_tokens and max_images must be positive");
         }
@@ -341,10 +349,10 @@ public:
         auto & engine = context.language_model;
         engine.reset();
         engine.append(engine.tokenize(u1_chat_prompt(prompt, u1_interleave_system_prompt) +
-            (options.think ? "<think>\n" : "<think>\n\n</think>\n\n")));
+                                      (options.think ? "<think>\n" : "<think>\n\n</think>\n\n")));
         const auto & descriptor = model_descriptor_for(family());
-        const size_t image_tokens = size_t(options.width / descriptor.image_stride) *
-                                    size_t(options.height / descriptor.image_stride);
+        const size_t image_tokens =
+            size_t(options.width / descriptor.image_stride) * size_t(options.height / descriptor.image_stride);
         if (image_tokens > engine.available_u1_generated_image_tokens()) {
             throw std::invalid_argument("Image dimensions exceed the interleaved understanding context");
         }
@@ -359,7 +367,10 @@ public:
             const auto piece = engine.piece(token);
             if (piece != u1_rules::image_start) {
                 result.text += piece;
-                { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
+                {
+                    profiling::phase_scope phase("understanding_decode");
+                    engine.append({token});
+                }
                 ++text_tokens;
                 continue;
             }
@@ -372,18 +383,21 @@ public:
                 }
                 break;
             }
-            { profiling::phase_scope phase("understanding_decode"); engine.append({token}); }
+            {
+                profiling::phase_scope phase("understanding_decode");
+                engine.append({token});
+            }
             auto & diffusion = context.diffusion();
             context.transfer_prefix(conditioning_slot::conditional);
 
             auto image_options = options;
             image_options.seed += static_cast<int64_t>(result.images.size());
             image_result image{options.width, options.height, {}, {}, {}, {}};
-            image = diffusion.generate(prompt, image_options, 0.f,
-                                           std::move(image));
+            image = diffusion.generate(prompt, image_options, 0.f, std::move(image));
             const image_input generated{image.width, image.height, image.rgb};
             const auto embeddings = diffusion.encode_u1_image(generated);
-            engine.append_u1_generated_image_embeddings(embeddings, image.width / u1_rules::image_stride, image.height / u1_rules::image_stride);
+            engine.append_u1_generated_image_embeddings(embeddings, image.width / u1_rules::image_stride,
+                                                        image.height / u1_rules::image_stride);
             result.text += "<image>";
             result.images.push_back(std::move(image));
         }

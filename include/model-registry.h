@@ -28,13 +28,13 @@ struct model_descriptor {
     model_family family;
     const char * architecture;
     uint32_t capabilities;
-    int context_size;       // Language-model context length.
-    int batch_size;         // Maximum text batch used by the runtime.
-    int image_stride;       // Required image width/height alignment.
-    int default_width;      // Default generated image width.
-    int default_height;     // Default generated image height.
-    int max_width;          // Zero means no explicit maximum.
-    int max_height;         // Zero means no explicit maximum.
+    int context_size;   // Language-model context length.
+    int batch_size;     // Maximum text batch used by the runtime.
+    int image_stride;   // Required image width/height alignment.
+    int default_width;  // Default generated image width.
+    int default_height; // Default generated image height.
+    int max_width;      // Zero means no explicit maximum.
+    int max_height;     // Zero means no explicit maximum.
     const char * const * required_components;
     size_t required_component_count;
 };

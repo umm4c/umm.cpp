@@ -28,8 +28,8 @@ json annotate_timings(const json & graphs, const json & trace) {
     };
     std::map<input_key, std::map<measurement_key, measurement>> grouped;
     for (const auto & event : trace) {
-        if (event.at("pass") != "timing" || event.at("warmup") ||
-            event.at("event_type") != "completed" || event.at("kind") != "backend") {
+        if (event.at("pass") != "timing" || event.at("warmup") || event.at("event_type") != "completed" ||
+            event.at("kind") != "backend") {
             continue;
         }
         const auto device = event.at("device_id").get<std::string>();
@@ -39,16 +39,15 @@ json annotate_timings(const json & graphs, const json & trace) {
         const auto scope = event.at("timing_scope").get<std::string>();
         const auto duration = event.at("duration_ms").get<double>();
         if (graph.at("kind") != "backend" || graph.at("phase") != event.at("phase") ||
-            !event.at("executed").get<bool>() || event.at("status") != 0 ||
-            !std::isfinite(duration) || duration < 0 ||
+            !event.at("executed").get<bool>() || event.at("status") != 0 || !std::isfinite(duration) || duration < 0 ||
             (scope != "synchronized_host_wall" && scope != "rpc_worker_synchronized_host_wall") ||
             (scope == "rpc_worker_synchronized_host_wall" && event.at("worker_nodes") != count)) {
             throw std::runtime_error("Invalid completed backend timing in profiler annotations");
         }
         const auto & submission = event.at("submission");
-        auto & samples = grouped[{graph.at("logical_graph_id").get<std::string>(),
-                                  event.at("case_id").get<std::string>(),
-                                  submission.at("tokens"), submission.at("cached_tokens")}];
+        auto & samples =
+            grouped[{graph.at("logical_graph_id").get<std::string>(), event.at("case_id").get<std::string>(),
+                     submission.at("tokens"), submission.at("cached_tokens")}];
         auto & record = samples[{device, physical_id, scope}];
         record.nodes = count;
         record.samples.push_back(duration);
@@ -62,14 +61,19 @@ json annotate_timings(const json & graphs, const json & trace) {
             const auto & [device, physical_id, scope] = source;
             const auto summary = sample_statistics(std::move(measurement.samples));
             timings.push_back({
-                {"device_id", device}, {"graph_id", physical_id}, {"timing_scope", scope},
+                {"device_id", device},
+                {"graph_id", physical_id},
+                {"timing_scope", scope},
                 {"node_range", {0, measurement.nodes}},
-                {"median_ms", summary.at("p50")}, {"sample_count", summary.at("sample_count")},
+                {"median_ms", summary.at("p50")},
+                {"sample_count", summary.at("sample_count")},
             });
         }
         result.push_back({
-            {"schema_version", "umm-profiler-timing/v1"}, {"logical_graph_id", logical_id},
-            {"case_id", case_id}, {"submission", {{"tokens", tokens}, {"cached_tokens", cached_tokens}}},
+            {"schema_version", "umm-profiler-timing/v1"},
+            {"logical_graph_id", logical_id},
+            {"case_id", case_id},
+            {"submission", {{"tokens", tokens}, {"cached_tokens", cached_tokens}}},
             {"timings", std::move(timings)},
         });
     }

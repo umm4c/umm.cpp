@@ -20,8 +20,7 @@ enum class conditioning_slot {
 class diffusion_adapter {
 public:
     diffusion_adapter(const std::string & model, const std::string & vae, const std::string & llm,
-                      const std::string & backend, const std::string & max_vram,
-                      request_metrics * metrics);
+                      const std::string & backend, const std::string & max_vram, request_metrics * metrics);
     static void install_log_callback();
 
     void set_prefix(conditioning_slot slot, const kv_prefix & prefix);

@@ -20,6 +20,7 @@ public:
     const std::vector<weight_residency> & residency() const;
     // Call once per new graph, after the previous graph has stopped executing.
     size_t bind(ggml_backend_sched_t sched, const random_plan & plan);
+
 private:
     struct impl;
     std::unique_ptr<impl> impl_;

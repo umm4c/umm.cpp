@@ -7,10 +7,8 @@ namespace umm {
 namespace {
 
 constexpr uint32_t all_capabilities =
-    static_cast<uint32_t>(model_capability::text) |
-    static_cast<uint32_t>(model_capability::image) |
-    static_cast<uint32_t>(model_capability::understand) |
-    static_cast<uint32_t>(model_capability::edit) |
+    static_cast<uint32_t>(model_capability::text) | static_cast<uint32_t>(model_capability::image) |
+    static_cast<uint32_t>(model_capability::understand) | static_cast<uint32_t>(model_capability::edit) |
     static_cast<uint32_t>(model_capability::image_guidance);
 
 constexpr const char * u1_components[] = {
@@ -28,11 +26,9 @@ constexpr const char * bagel_components[] = {
 // Single source of truth for model-specific limits and package components.
 constexpr model_descriptor descriptors[] = {
     // SenseNova U1 stores its native vision encoder in the generation GGUF.
-    {model_family::sensenova_u1, "sensenova_u1", all_capabilities,
-     16384, 8192, 32, 2048, 2048, 0, 0, u1_components, 2},
+    {model_family::sensenova_u1, "sensenova_u1", all_capabilities, 16384, 8192, 32, 2048, 2048, 0, 0, u1_components, 2},
     // BAGEL keeps its vision projector and VAE as separate package components.
-    {model_family::bagel, "bagel", all_capabilities,
-     8192, 8192, 16, 1024, 1024, 1024, 1024, bagel_components, 4},
+    {model_family::bagel, "bagel", all_capabilities, 8192, 8192, 16, 1024, 1024, 1024, 1024, bagel_components, 4},
 };
 
 const model_descriptor * find_descriptor(std::string_view architecture) {

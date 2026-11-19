@@ -21,8 +21,9 @@ namespace {
 struct active_metric_scope {
     request_metrics *& slot;
     request_metrics * previous;
-    active_metric_scope(request_metrics *& slot_, request_metrics * current)
-        : slot(slot_), previous(slot_) { slot = current; }
+    active_metric_scope(request_metrics *& slot_, request_metrics * current) : slot(slot_), previous(slot_) {
+        slot = current;
+    }
     ~active_metric_scope() { slot = previous; }
 };
 
@@ -63,10 +64,9 @@ struct session::impl {
     std::unique_ptr<diffusion_adapter> image_engine;
     request_metrics * active_metrics = nullptr;
 
-    impl(model_package package_, const std::string & understanding_backend,
-         const std::string & generation_backend_, const std::string & generation_max_vram_,
-         const std::string & vision_backend_, int context_size, int batch_size, int microbatch_size,
-         const understanding_schedule & schedule);
+    impl(model_package package_, const std::string & understanding_backend, const std::string & generation_backend_,
+         const std::string & generation_max_vram_, const std::string & vision_backend_, int context_size,
+         int batch_size, int microbatch_size, const understanding_schedule & schedule);
 
     diffusion_adapter & diffusion();
     void append_u1_image(const image_input & image);
@@ -84,17 +84,13 @@ session::impl::impl(model_package package_, const std::string & understanding_ba
                     const understanding_schedule & schedule)
     : package(std::move(package_)),
       language_model(package.component("understanding"),
-                     context_size ? context_size : context_size_for_single_cann_u1(
-                         package.family, understanding_backend, generation_backend_),
-                     99, false,
-                     understanding_backend, batch_size, microbatch_size, schedule.secondary_backend),
-      workflow(create_model_workflow(language_model.family())),
-      generation_model(package.component("generation")),
-      generation_backend(generation_backend_),
-      generation_max_vram(generation_max_vram_),
-      vision_backend(vision_backend_),
-      vae_model(package.component("vae")),
-      vision_model(package.component("vision")) {
+                     context_size
+                         ? context_size
+                         : context_size_for_single_cann_u1(package.family, understanding_backend, generation_backend_),
+                     99, false, understanding_backend, batch_size, microbatch_size, schedule.secondary_backend),
+      workflow(create_model_workflow(language_model.family())), generation_model(package.component("generation")),
+      generation_backend(generation_backend_), generation_max_vram(generation_max_vram_),
+      vision_backend(vision_backend_), vae_model(package.component("vae")), vision_model(package.component("vision")) {
     if (package.family != model_family::unknown && package.family != language_model.family()) {
         throw std::runtime_error("Model package architecture does not match its understanding GGUF");
     }
@@ -125,31 +121,29 @@ void session::impl::append_u1_image(const image_input & image) {
     if (active_metrics) {
         active_metrics->image_encoder_ms = std::max(0.0, active_metrics->image_encoder_ms) + metrics_elapsed_ms(start);
     }
-    language_model.append_u1_image_embeddings(embeddings, image.width / stride, image.height / stride,
-                                             true, active_metrics);
+    language_model.append_u1_image_embeddings(embeddings, image.width / stride, image.height / stride, true,
+                                              active_metrics);
     if (active_metrics) {
-        active_metrics->vision_encode_ms =
-            std::max(0.0, active_metrics->vision_encode_ms) + metrics_elapsed_ms(start);
+        active_metrics->vision_encode_ms = std::max(0.0, active_metrics->vision_encode_ms) + metrics_elapsed_ms(start);
         active_metrics->vision_tokens += size_t(image.width / stride) * (image.height / stride) + 2;
     }
 }
 
 void session::impl::append_bagel_image(const image_input & image) {
-    if (!model_supports(language_model.family(), model_capability::understand) ||
-        vision_model.empty()) {
+    if (!model_supports(language_model.family(), model_capability::understand) || vision_model.empty()) {
         throw std::runtime_error("Image understanding requires a model package with vision weights");
     }
     if (!vision_encoder) {
         const auto load_start = metrics_clock::now();
         vision_encoder = std::make_unique<bagel_vision_encoder>(vision_model, vision_backend);
-        if (active_metrics) active_metrics->vision_model_load_ms = metrics_elapsed_ms(load_start);
+        if (active_metrics)
+            active_metrics->vision_model_load_ms = metrics_elapsed_ms(load_start);
     }
     const auto start = metrics_clock::now();
     const auto before = language_model.tokens().size();
     language_model.append_bagel_image_embeddings(vision_encoder->encode(image));
     if (active_metrics) {
-        active_metrics->vision_encode_ms =
-            std::max(0.0, active_metrics->vision_encode_ms) + metrics_elapsed_ms(start);
+        active_metrics->vision_encode_ms = std::max(0.0, active_metrics->vision_encode_ms) + metrics_elapsed_ms(start);
         active_metrics->vision_tokens += language_model.tokens().size() - before;
     }
 }
@@ -170,9 +164,7 @@ workflow_context session::impl::workflow_context_for_request() {
     context.metrics = active_metrics;
     context.diffusion = [this]() -> diffusion_adapter & { return diffusion(); };
     context.transfer_prefix = [this](conditioning_slot slot) { transfer_prefix(slot); };
-    context.append_latent_image = [this](const image_input & image, int64_t seed) {
-        append_latent_image(image, seed);
-    };
+    context.append_latent_image = [this](const image_input & image, int64_t seed) { append_latent_image(image, seed); };
     context.append_u1_image = [this](const image_input & image) { append_u1_image(image); };
     context.append_bagel_image = [this](const image_input & image) { append_bagel_image(image); };
     context.encode_u1_prefill_image = [this](const image_input & image) {
@@ -184,7 +176,8 @@ workflow_context session::impl::workflow_context_for_request() {
             const auto duration = metrics_elapsed_ms(start);
             active_metrics->image_encoder_ms = std::max(0.0, active_metrics->image_encoder_ms) + duration;
             active_metrics->vision_encode_ms = std::max(0.0, active_metrics->vision_encode_ms) + duration;
-            active_metrics->vision_tokens += size_t(image.width / u1_rules::image_stride) * (image.height / u1_rules::image_stride) + 2;
+            active_metrics->vision_tokens +=
+                size_t(image.width / u1_rules::image_stride) * (image.height / u1_rules::image_stride) + 2;
         }
         return embeddings;
     };
@@ -193,31 +186,23 @@ workflow_context session::impl::workflow_context_for_request() {
 
 // Public session API --------------------------------------------------------
 
-session::session(const std::string & model,
-                 const std::string & generation_model,
-                 const std::string & understanding_backend,
-                 const std::string & generation_backend,
-                 const std::string & generation_max_vram,
-                 const std::string & vision_backend,
-                 int context_size, int batch_size, int microbatch_size)
-    : session(model, generation_model, understanding_backend, generation_backend, generation_max_vram,
-              vision_backend, context_size, batch_size, microbatch_size, {}) {}
+session::session(const std::string & model, const std::string & generation_model,
+                 const std::string & understanding_backend, const std::string & generation_backend,
+                 const std::string & generation_max_vram, const std::string & vision_backend, int context_size,
+                 int batch_size, int microbatch_size)
+    : session(model, generation_model, understanding_backend, generation_backend, generation_max_vram, vision_backend,
+              context_size, batch_size, microbatch_size, {}) {}
 
-session::session(const std::string & model,
-                 const std::string & generation_model,
-                 const std::string & understanding_backend,
-                 const std::string & generation_backend,
-                 const std::string & generation_max_vram,
-                 const std::string & vision_backend,
-                 int context_size, int batch_size, int microbatch_size,
-                 const understanding_schedule & schedule) {
+session::session(const std::string & model, const std::string & generation_model,
+                 const std::string & understanding_backend, const std::string & generation_backend,
+                 const std::string & generation_max_vram, const std::string & vision_backend, int context_size,
+                 int batch_size, int microbatch_size, const understanding_schedule & schedule) {
     auto package = resolve_model(model, generation_model);
     ggml_backend_load_all();
     llama_backend_init();
     diffusion_adapter::install_log_callback();
-    impl_ = std::make_unique<impl>(std::move(package), understanding_backend, generation_backend,
-                                  generation_max_vram, vision_backend,
-                                  context_size, batch_size, microbatch_size, schedule);
+    impl_ = std::make_unique<impl>(std::move(package), understanding_backend, generation_backend, generation_max_vram,
+                                   vision_backend, context_size, batch_size, microbatch_size, schedule);
 }
 
 session::~session() = default;
@@ -227,12 +212,14 @@ bool session::supports(model_capability capability) const {
 }
 
 std::string session::text(const std::string & prompt, int max_tokens, request_metrics * metrics) {
-    if (max_tokens < 1) throw std::invalid_argument("max_tokens must be positive");
+    if (max_tokens < 1)
+        throw std::invalid_argument("max_tokens must be positive");
     active_metric_scope binding(impl_->active_metrics, metrics);
     auto & engine = impl_->language_model;
     engine.reset();
     const auto tokens = engine.tokenize(impl_->workflow->text_prompt(prompt));
-    if (tokens.size() + size_t(max_tokens) > engine.context_capacity()) throw std::invalid_argument("Text and output reserve exceed context capacity");
+    if (tokens.size() + size_t(max_tokens) > engine.context_capacity())
+        throw std::invalid_argument("Text and output reserve exceed context capacity");
     const auto start = metrics_clock::now();
     engine.append(tokens, true, metrics);
     if (metrics) {
@@ -246,13 +233,16 @@ std::string session::text(const std::string & prompt, int max_tokens, request_me
     for (int i = 0; i < max_tokens; ++i) {
         const auto token = engine.greedy();
         if (engine.is_end(token)) {
-            if (metrics) metrics->finish_reason = "stop";
+            if (metrics)
+                metrics->finish_reason = "stop";
             break;
         }
         const auto piece = engine.piece(token);
-        if (piece == "<img>") throw std::runtime_error("The model requested image output during a text-only request");
+        if (piece == "<img>")
+            throw std::runtime_error("The model requested image output during a text-only request");
         if (metrics) {
-            if (metrics->ttft_ms < 0) metrics->ttft_ms = metrics_elapsed_ms(metrics->request_start);
+            if (metrics->ttft_ms < 0)
+                metrics->ttft_ms = metrics_elapsed_ms(metrics->request_start);
             ++metrics->output_tokens;
         }
         result += piece;
@@ -266,8 +256,8 @@ std::string session::text(const std::string & prompt, int max_tokens, request_me
     return result;
 }
 
-std::string session::understand(const image_input & image, const std::string & prompt,
-                                int max_tokens, bool think, request_metrics * metrics) {
+std::string session::understand(const image_input & image, const std::string & prompt, int max_tokens, bool think,
+                                request_metrics * metrics) {
     if (!supports(model_capability::understand)) {
         throw std::invalid_argument("Image understanding is not supported by the selected model");
     }
@@ -275,16 +265,17 @@ std::string session::understand(const image_input & image, const std::string & p
     active_metric_scope binding(impl_->active_metrics, metrics);
     const auto preprocess_start = metrics_clock::now();
     const auto prepared = impl_->workflow->prepare_image(image);
-    if (metrics) metrics->input_preprocess_ms = metrics_elapsed_ms(preprocess_start);
-    if (metrics) metrics->inference_start = metrics_clock::now();
+    if (metrics)
+        metrics->input_preprocess_ms = metrics_elapsed_ms(preprocess_start);
+    if (metrics)
+        metrics->inference_start = metrics_clock::now();
     auto context = impl_->workflow_context_for_request();
     return impl_->workflow->understand(context, prepared, prompt, max_tokens, think);
 }
 
-std::string session::understand_sequence(const std::vector<understanding_segment> & content,
-                                         int max_tokens, request_metrics * metrics) {
-    if (impl_->language_model.family() != model_family::sensenova_u1 ||
-        !supports(model_capability::understand)) {
+std::string session::understand_sequence(const std::vector<understanding_segment> & content, int max_tokens,
+                                         request_metrics * metrics) {
+    if (impl_->language_model.family() != model_family::sensenova_u1 || !supports(model_capability::understand)) {
         throw std::invalid_argument("Ordered multimodal understanding requires SenseNova U1");
     }
     active_metric_scope binding(impl_->active_metrics, metrics);
@@ -306,20 +297,19 @@ std::string session::understand_sequence(const std::vector<understanding_segment
     return impl_->workflow->understand_sequence(context, prepared, max_tokens);
 }
 
-image_result session::image(const std::string & prompt, const image_options & options,
-                            request_metrics * metrics) {
+image_result session::image(const std::string & prompt, const image_options & options, request_metrics * metrics) {
     if (!supports(model_capability::image)) {
         throw std::invalid_argument("Image generation is not supported by the selected model");
     }
 
     active_metric_scope binding(impl_->active_metrics, metrics);
-    if (metrics) metrics->inference_start = metrics_clock::now();
+    if (metrics)
+        metrics->inference_start = metrics_clock::now();
     auto context = impl_->workflow_context_for_request();
     return impl_->workflow->generate(context, prompt, options, nullptr);
 }
 
-image_result session::edit(const image_input & image, const std::string & prompt,
-                           const image_options & requested) {
+image_result session::edit(const image_input & image, const std::string & prompt, const image_options & requested) {
     if (!supports(model_capability::edit)) {
         throw std::invalid_argument("Image editing is not supported by the selected model");
     }
@@ -336,8 +326,8 @@ image_result session::edit(const image_input & image, const std::string & prompt
     return impl_->workflow->generate(context, prompt, options, &prepared);
 }
 
-interleave_result session::interleave(const std::string & prompt, const image_options & options,
-                                     int max_text_tokens, int max_images) {
+interleave_result session::interleave(const std::string & prompt, const image_options & options, int max_text_tokens,
+                                      int max_images) {
     if (impl_->language_model.family() != model_family::sensenova_u1) {
         throw std::invalid_argument("Interleaved generation is supported only by SenseNova U1");
     }
