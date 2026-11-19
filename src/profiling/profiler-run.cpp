@@ -6,7 +6,7 @@
 #include <memory>
 #include "runtime/case-protocol.h"
 #include "runtime/identity.h"
-#include "scheduling/execution-policy.h"
+#include "scheduling/backend-devices.h"
 #include "inference/model-package.h"
 #include "ggml-backend.h"
 #include "../../third_party/llama.cpp/common/base64.hpp"

@@ -3,7 +3,7 @@
 #include "kv-prefix.h"
 #include "model-registry.h"
 #include "request-metrics.h"
-#include "scheduling/execution-policy.h"
+#include "scheduling/placement.h"
 #include "llama.h"
 #include "ggml-backend.h"
 

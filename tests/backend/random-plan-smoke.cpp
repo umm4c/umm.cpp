@@ -1,6 +1,6 @@
-#include "scheduling/policies/policy.h"
-#include "scheduling/weight-replicas.h"
-#include "scheduling/execution-policy.h"
+#include "scheduling/policies/random-plan.h"
+#include "scheduling/weights/weight-replicas.h"
+#include "scheduling/backend-devices.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -31,7 +31,7 @@ bool placement_hook(ggml_backend_sched_t sched, ggml_cgraph *, bool allocated, v
     if (!allocated) {
         ++state.before;
         if (state.replicas)
-            state.replicas->bind(sched, *state.plan);
+            state.replicas->bind(sched, state.plan->placements);
         umm::assign_random_plan(sched, *state.plan);
     } else {
         ++state.after;

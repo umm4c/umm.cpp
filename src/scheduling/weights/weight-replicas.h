@@ -1,7 +1,9 @@
 #pragma once
 
-#include "random-plan.h"
+#include "scheduling/placement.h"
+
 #include <memory>
+#include <vector>
 
 namespace umm {
 struct weight_residency {
@@ -19,7 +21,7 @@ public:
     ~weight_replicas();
     const std::vector<weight_residency> & residency() const;
     // Call once per new graph, after the previous graph has stopped executing.
-    size_t bind(ggml_backend_sched_t sched, const random_plan & plan);
+    size_t bind(ggml_backend_sched_t sched, const std::vector<node_placement> & placements);
 
 private:
     struct impl;

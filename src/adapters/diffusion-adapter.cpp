@@ -2,7 +2,7 @@
 
 #include "inference/image-input.h"
 #include "inference/models/u1-rules.h"
-#include "scheduling/execution-policy.h"
+#include "scheduling/backend-devices.h"
 #include "stable-diffusion.h"
 
 #include <cmath>

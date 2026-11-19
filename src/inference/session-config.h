@@ -1,7 +1,7 @@
 #pragma once
 
 #include "model-registry.h"
-#include "scheduling/execution-policy.h"
+#include "scheduling/backend-devices.h"
 
 #include <string>
 

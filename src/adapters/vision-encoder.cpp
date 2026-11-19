@@ -1,7 +1,7 @@
 #include "vision-encoder.h"
 
 #include "inference/image-input.h"
-#include "scheduling/execution-policy.h"
+#include "scheduling/backend-devices.h"
 
 #include "clip.h"
 #include "clip-impl.h"

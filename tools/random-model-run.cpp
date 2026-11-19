@@ -1,7 +1,7 @@
-#include "scheduling/execution-policy.h"
+#include "scheduling/backend-devices.h"
 #include "adapters/llama-cpp-adapter.h"
-#include "scheduling/policies/policy.h"
-#include "scheduling/weight-replicas.h"
+#include "scheduling/policies/random-plan.h"
+#include "scheduling/weights/weight-replicas.h"
 #include "json.hpp"
 #include <algorithm>
 #include <chrono>
@@ -60,7 +60,7 @@ bool place(ggml_backend_sched_t sched, ggml_cgraph * graph, bool allocated, void
                                                       ggml_backend_sched_get_backend(sched, 1), state.seed, state.flip,
                                                       state.cuts);
                 state.planning_ms = ms(start);
-                state.weight_bindings = state.replicas ? state.replicas->bind(sched, state.plan) : 0;
+                state.weight_bindings = state.replicas ? state.replicas->bind(sched, state.plan.placements) : 0;
                 umm::assign_random_plan(sched, state.plan);
             }
             return true;

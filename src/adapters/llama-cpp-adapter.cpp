@@ -1,7 +1,7 @@
 #include "inference/profile-context.h"
 #include "llama-cpp-adapter.h"
 #include "llama-cpp-prefill.h"
-#include "scheduling/execution-policy.h"
+#include "scheduling/backend-devices.h"
 
 #include "llama-context.h"
 #include "llama-model.h"

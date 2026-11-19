@@ -124,15 +124,14 @@ const std::vector<weight_residency> & weight_replicas::residency() const {
     return impl_->metrics;
 }
 
-size_t weight_replicas::bind(ggml_backend_sched_t sched, const random_plan & plan) {
+size_t weight_replicas::bind(ggml_backend_sched_t sched, const std::vector<node_placement> & placements) {
     for (auto & device : impl_->devices)
         device.views.clear();
-    impl_->views.reset(
-        ggml_init({(plan.placements.size() * GGML_MAX_SRC + 1) * ggml_tensor_overhead(), nullptr, true}));
+    impl_->views.reset(ggml_init({(placements.size() * GGML_MAX_SRC + 1) * ggml_tensor_overhead(), nullptr, true}));
     if (!impl_->views)
         throw std::runtime_error("Cannot create weight view descriptors");
     size_t bindings = 0;
-    for (const auto & placement : plan.placements) {
+    for (const auto & placement : placements) {
         auto node = placement.node;
         if (metadata(node))
             continue;

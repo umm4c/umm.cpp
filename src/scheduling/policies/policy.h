@@ -1,7 +1,6 @@
 #pragma once
 
 #include "scheduling/execution-policy.h"
-#include "scheduling/random-plan.h"
 
 namespace umm {
 
@@ -19,15 +18,6 @@ public:
 class remote_910b_policy final : public execution_policy {
 public:
     understanding_schedule apply(execution_options & options) const override;
-};
-
-class random_policy final : public execution_policy {
-public:
-    understanding_schedule apply(execution_options & options) const override;
-
-    // Graph tensors must be unallocated except for inputs, weights and their views.
-    static random_plan plan(ggml_cgraph * graph, ggml_backend_t first, ggml_backend_t second, uint32_t seed,
-                            bool reverse, int cut_count = 1);
 };
 
 namespace policy_options {
