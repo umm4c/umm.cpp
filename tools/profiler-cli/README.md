@@ -1,278 +1,89 @@
-# Real graph profiler
+# 计算图分析工具
 
-The profiler accepts **model, devices and representative workload**. It now
-executes real SenseNova U1 requests and exports graphs and measured execution
-intervals. The synthetic mock implementation has been removed.
+`umm-profiler` 用代表性请求运行 SenseNova U1.5，记录实际执行的计算图、设备放置和耗时。可采集本地 310P 和远端 CANN RPC worker 的结果。
 
-## Build and run
+## 构建
 
-Configure the UMM root using the same CANN environment as normal inference:
+先按 [本地 310P 部署指南](../../scripts/ascend/README.md) 准备 CANN 容器和源码。在仓库根目录执行：
 
 ```bash
-cmake -S . -B build-profiler -DGGML_CANN=ON -DGGML_RPC=ON -DSOC_TYPE=Ascend310P3 -DCMAKE_BUILD_TYPE=Release
-cmake --build build-profiler --target umm-profiler -j 4
-build-profiler/bin/umm-profiler --request tools/profiler-cli/request.example.json --out /path/to/new-profile
+cmake -S . -B build-profiler -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_CANN=ON -DSOC_TYPE=Ascend310P3 -DUSE_ACL_GRAPH=OFF \
+  -DGGML_RPC=ON -DGGML_RPC_RDMA=OFF
+cmake --build build-profiler --target umm-profiler -j 8
 ```
 
-Run inside the deployment container, with the requested local device and input
-paths visible and output parent writable. The RPC endpoint must already be
-reachable (for example through the existing SSH tunnel). The profiler does not
-start workers or tunnels. Building from `tools/profiler-cli/` alone is no longer
-supported: the real collector links the production runtime and shared GGML.
-No new product feature flag is required; regular inference does not enable the
-observer or add graph synchronization.
+运行时映射准备采集的本地卡。采集远端设备前，按 [RPC 部署指南](../../scripts/rpc/README.md) 启动同源 worker 和 SSH 隧道，再让容器通过 host 网络访问隧道。远端整图计时需要支持批量计时的 worker（RPC 6.1 起），层、块和算子计时需要匹配的 RPC 6.3 worker。
 
-## Input and execution defaults
+## 配置并运行
 
-Only three top-level fields are accepted:
+复制 [request.example.json](request.example.json)，将下面三个字段改成实际值。路径以执行 profiler 的环境为准。
 
-- `model`: a real SenseNova U1 model-package directory.
-- `devices`: a nonempty list of uniquely named device descriptions.
-- `representative_workload`: a real workload/v1 directory with manifest.json and cases.jsonl.
-
-A device has `id`, `transport` (`local` or `rpc`) and `backend` (e.g. CANN0).
-RPC requires `endpoint`; local must not have a nonempty endpoint. In this first
-collector, local devices must be Ascend310P; RPC must expose one CANN0 worker.
-Worker chip, physical card, numeric configuration and software are deployment
-facts not independently verified by client-side profiling.
-
-The existing text_generation, mixed_understanding, multimodal_prefill and
-image_generation request formats are replayed via the normal UMM request path.
-Image paths resolve against the workload directory; image and cases hashes are
-checked when provided. Input order and image groups are preserved. Malformed
-or failed requests abort the profile rather than producing mock success.
-
-Devices run sequentially. The structure pass and two baseline/timing pairs run
-first. Separate `layer` and `block` passes collect understanding graph timings.
-Add `--operators` after the output path to collect an independent operator pass.
-Replays use the same cases, order and seeds and reset model context through the regular workflow.
-One session per device keeps its weights loaded across all passes. Use a small
-representative workload for calibration.
-
-Runtime defaults are resolved internally and saved in the manifest:
-
-| Workload | Context / batch / microbatch |
+| 字段 | 填写方式 |
 | --- | --- |
-| Generation only | 2048 / 512 / 256 |
-| Any case has more than four images | 32768 / 1152 / 1152 |
-| Other understanding or mixed workloads | 8192 / 4096 / 4096 |
+| `model` | SenseNova U1.5 模型包目录 |
+| `devices` | 待测设备列表，每项有唯一 `id`。`transport` 为 `local` 或 `rpc`，`backend` 填设备名，例如 `CANN0`。仅 RPC 项需要 `endpoint` |
+| `representative_workload` | 含 `manifest.json` 和 `cases.jsonl` 的 `workload/v1` 目录。相对图片路径以该目录为基准 |
 
-Local 310P uses Q8 NZ and saturation. RPC uses its existing worker configuration;
-client options do not reconfigure the worker. Known merged 8step-V2 packages
-use 8 steps and CFG 1; others use 50 steps and CFG 4, with shift 3. Generation
-parameters provided by workload cases use the normal runtime override rules.
-No input resizing, truncation or automatic cut search is performed.
+负载支持纯文本、单图理解、图文混合 prefill 和文生图。建议先选少量典型请求，采集时各设备依次运行同一份负载。每台设备依次运行结构轮、两组基线与计时轮，以及理解图的层和块计时轮。
 
-Run in a **dedicated process**: backend environment and SD callbacks are
-process-global. Concurrent ordinary inference in the same process is unsupported.
-The C++ API serializes profiler calls and restores modified environment values;
-some backend configuration (including NZ) is latched on first use. Do not initialize
-or use backends before calling this API.
+准备最小负载时，可以把 [JSONL 调用示例](../../scripts/rpc/README.md#同一进程发送多条-jsonl-请求)的两条文本请求保存为 `cases.jsonl`，同目录的 `manifest.json` 写入 `{"schema_version":"workload/v1","case_count":2}`，再将该目录填入请求配置。
 
-## C++ API
-
-`src/profiling/profiler.h`: `umm::profiling::request`, `device`, `result`,
-`parse_request(json)`, `profile(request)` and `write_result(result, directory)`.
-Link `umm-profiler-api`. The public three-field request remains unchanged.
-The writer never overwrites an existing directory; its parent must exist.
-The CLI rejects existing output before loading. Collection is in memory and
-written after success; file-system failures can leave a partial new directory.
-
-## Output v3
-
-| Artifact | Content |
+| 负载 | context / batch / ubatch 默认值 |
 | --- | --- |
-| `manifest.json` | Model/workload hashes, original cases, resolved per-device settings, runtime identity, initialization time, coverage and limitations |
-| `graphs.jsonl` | Actual graph structure, tensor shapes/strides/types, view/root relationships, op parameters, dependencies and scheduler splits |
-| `trace.jsonl` | Each executed scheduler/backend graph, case/device/replay association, phase, submitted token/KV metadata and host interval |
-| `costs.jsonl` | Post-warmup statistics per exact graph fingerprint and device; sample count, mean/p50/p95/min/max |
-| `timings.jsonl` | Steady-state backend timings grouped by logical graph, case, submitted tokens and cached context |
-| `hierarchy.jsonl` | CANN stream durations for layers, blocks and optional operators, with physical graph references and half-open node ranges |
-| `requests.jsonl` | Actual responses, stage/token/prefill metrics, output hashes and within-device repeatability |
-| `report.md` | Measurement scope and unsupported capabilities |
+| 只有文生图 | `2048 / 512 / 256` |
+| 有案例使用超过四张输入图像 | `32768 / 1152 / 1152` |
+| 其他 | `8192 / 4096 / 4096` |
 
-The manifest and graph/event/cost schemas are v3. The structure pass alone builds
-structural fingerprints and exports descriptors. It freezes a per-case execution
-sequence with each graph ID and an address-independent contract. The timing pass
-references those IDs after checking phase, node order, all tensor names/types,
-shapes/strides, operator parameters, topology, aliases, buffer roles/types and
-actual node devices. Checks use preallocated arrays and a flat uniqueness table;
-no SHA, structural serialization or pointer-map rebuild runs in the timing pass.
-This remains a linear metadata check, not zero-cost or constant-time lookup.
+实际参数以结果的 manifest 为准。
 
-New graph objects and allocation addresses are allowed when the complete contract
-matches. Changed inputs are allowed; input values are not structure. Changed
-structure, extra/fewer executions or changed phase are rejected rather than
-silently reusing stale metadata or collecting new structure inside a timing run.
-Submission token/KV metadata is recorded on events; tensor shapes describe the
-actual micrograph. `graph_id` includes placement; `logical_graph_id` excludes
-explicit device/buffer names and scheduler copy prefixes. IDs are build-scoped,
-not a portable graph ABI. Node/tensor IDs are local to their graph.
+```bash
+cp tools/profiler-cli/request.example.json profile-request.json
+# 编辑 profile-request.json
+mkdir -p profiles
+build-profiler/bin/umm-profiler --request profile-request.json --out profiles/u15-test
+```
 
-Logical GGML layout is exported; backend-internal packed layout is unknown.
-Only explicit GGML views are identified as aliases; general cut legality remains
-unproven. Structural fingerprints are build-scoped, not a portable graph ABI.
+输出目录必须尚未存在。需要算子计时时，在命令末尾加 `--operators`。Profiler 应独立运行，便于把该轮耗时与普通推理区分开。CANN 使用 ACL Graph 或后端不支持细粒度计时时，对应记录标记为不可用。
 
-### Timings associated with the graph
+## 查看与校验
 
-`timings.jsonl` uses `umm-profiler-timing/v1`. Each row identifies an exact
-`logical_graph_id`, a workload case and the token/context metadata of the actual
-submission. Its `timings` entries refer to physical graphs by device and graph ID.
-Each entry covers a half-open `node_range` in that graph and records a median,
-sample count and timing scope. Entries are derived after collection from completed
-backend timing events. A graph with a different structural fingerprint gets its
-own row, even if it has the same stage name or execution order.
+| 文件 | 内容 |
+| --- | --- |
+| `manifest.json` | 模型与负载身份、设备、实际生效参数、采集范围和产物清单 |
+| `graphs.jsonl` | 节点、依赖、张量、视图和设备放置 |
+| `trace.jsonl` | 各次执行的阶段、图和请求关联、提交规模及计时 |
+| `costs.jsonl` | 按设备和图统计的热态整图耗时 |
+| `timings.jsonl` | 按逻辑图、请求与实际提交规模对齐的后端整图计时 |
+| `hierarchy.jsonl` | 理解图的层、块及可选算子计时，以及对应的节点范围 |
+| `requests.jsonl` | 请求响应、耗时、token 计数和输出一致性 |
+| `report.md` | 该次采集的范围与限制 |
 
-`timings.jsonl` covers whole backend submissions. It does not report timings for subranges.
-Request baselines in `requests.jsonl` provide the coarser end-to-end reference. Client
-submission and inclusive scheduler intervals stay in the trace and must be
-kept separate from backend timings.
+比较结果时，先对齐模型、请求、设备和计时口径。整图计时与其内部的层、块、算子计时覆盖同一段工作，不能相加。基线请求耗时可以用来估计采集带来的扰动。远端 worker 的同步完成时间、客户端提交时间和请求墙钟分别记录。
 
-`hierarchy.jsonl` provides finer ranges for U1.5 understanding graphs. Each
-record references the same `graphs.jsonl` and has one coverage level. Norm and
-the first residual belong to the Attention block, and the FFN block includes
-its Norm and the layer output residual. Preamble and epilogue have their own
-ranges. Fused operators share an interval. View-only nodes are grouped with
-adjacent compute. Each range is
-measured between events on the CANN stream. An interval can include idle time
-between launches. The collector reads the events after graph completion.
-With ACL graph capture active, or when a backend cannot provide the requested
-timing, the record is marked unavailable. Invalid event intervals have null
-durations. The tool follows the actual execution mode throughout the measurement.
+```bash
+python3 tools/profiler-cli/validate_capture.py profiles/u15-test
+```
 
-Remote range timing requires a 6.3 worker built from the matching GGML. The
-ordinary backend timing continues to support 6.1 and 6.2 workers. A fine RPC
-pass queues its boundaries for the next graph and reads back the ranges once
-at graph completion. This adds a response per profiled graph, with no
-per-operator RPC or stream synchronization. Prefer the coarsest matching range
-when scoring a cut. Parent and child ranges and different timing scopes are
-alternative descriptions of the same work.
+校验器也支持 manifest 中声明了候选文件的历史采集包。声明的文件缺失时会报错。可用 [Graph Atlas](https://github.com/umm4c/utils/tree/master/profiler-viewer) 打开采集包，浏览图层级、依赖和设备放置。
 
-See [Profiler design](DESIGN.md) for planned measurements and scheduling inputs.
-The validator also reads historical candidate artifacts when declared in the manifest.
+```bash
+# 如已将 utils 与 UMM.cpp 并列检出，可生成离线页面
+python3 ../utils/profiler-viewer/export_viewer.py \
+  --profile profiles/u15-test --out profiles/u15-test.html
+```
 
-Phase metadata covers understanding prefill/decode and native U1 vision graphs.
-Generation is a coarse phase, without individual conditioning/diffusion/VAE graph
-labels. Exact tensor shapes remain available for unclassified graphs.
-
-**Completed timing is synchronized host wall time, not device kernel time.**
-Local timing and structure observation retain their existing waits.
-RPC timing passes require a protocol 6.1 worker and instead open a window per
-request, record client submissions without observer-added waits, and collect
-worker records in one final response. Normal logits, activation and result reads
-are unchanged. Ordinary inference does not send profiling commands. A 6.1 client
-can use a 6.0 worker for ordinary inference, but batch profiling rejects it before
-sending unknown commands; a 6.0 client cannot connect to a 6.1 worker.
-
-The legacy `export_before_ms` field records structure work in structure events
-and contract-check/lookup preparation in timing events. Full JSON
-export occurs only in the structure pass.
-Client events use their per-device collector clock. Synchronized client scheduler
-intervals contain backend intervals and child preparation, so must not be summed.
-RPC timing emits `event_type: submitted`, `timing_scope: client_submission_host_wall`;
-its after callback means submission returned, not completion. These events never
-enter compute cost statistics. After collection, each backend submission has a
-separate `completed` worker event linked by `submission_event_id`, with
-`timing_scope: rpc_worker_synchronized_host_wall` and an independent per-window
-`clock_domain`. Worker start_ms is relative to BEGIN on the worker; prepare time
-is separate from synchronized compute. Worker events have no client parent.
-Never subtract timestamps across clock domains or equate worker backend time to
-full scheduler/network time. Only completed timing events enter cost statistics;
-RPC scheduler graphs therefore remain unmeasured. A percentile with few samples
-is descriptive only. Request wall time includes the final batch collection.
-
-For synchronized observation (including structure), successful scheduler execution without an eval callback means child backend events
-already fence the device streams. The scheduler retains its final synchronization
-but reuses those completion fences instead of performing another RPC read. Direct
-backend calls, scheduler entry, callback execution and failure paths retain their
-completion reads. A single-split RPC scheduler call therefore uses three reads
-instead of four; backend event timing still includes its own completion fence.
-This does not apply to RPC timing's submission observer, which adds no completion
-reads at graph boundaries. BEGIN is ordered but has no response; END returns a
-bounded, at least 4096-byte response and validates count, device, node count,
-GRAPH/RECOMPUTE and submission sequence. Capacity comes from the frozen case
-sequence (minimum 64, maximum 4096 records). Overflow or mismatched records fail
-the request. The collector exclusively owns the endpoint while a window is active.
-
-General cut legality, transfer calibration and memory peaks are
-still needed for a validated scheduling model. The manifest records paired
-observer-off/timing request walls. Their difference includes runtime variation.
-Output repeatability checks compare runs within each device. The bundle still
-sets `decision_usable: false`.
-
-## Checks
-
-Structure capture now collects one `graph_description`, shared by JSON export,
-placement/logical identity and the frozen contract. Timed checks still traverse
-preallocated contract storage without JSON, hashing or old tensor addresses.
-Graph IDs and the schemas of the retained artifacts are preserved. SHA256 uses
-the vendored implementation and file hashes remain streaming.
-
-Keep generic operator microbenchmarks outside this profiler. The deleted upstream
-operator harness is not restored or exposed as a build target.
-
-For generic text throughput, use `third_party/llama.cpp/tools/llama-bench` and
-`scripts/compare-llama-bench.py` in a standalone llama.cpp tools/common build.
-Match model/context/backend/NZ settings first; when using RPC, both sides must
-also use `GGML_MAX_NAME=160`. For U1 multimodal workloads, use representative
-requests through the UMM profiler. Graph-copy comparison remains a
-diagnostic path because it allocates/copies reachable tensors, including weights.
-
-Offline hardware inspection uses [msprof-import](../../../utils/msprof-import/README.md)
-with existing CANN exports. It does not collect hardware traces inside ordinary
-timing passes or infer cross-host clock offsets/node-to-kernel mappings.
+## 回归检查
 
 ```bash
 cmake --build build-profiler --target umm-profiler-observer-test umm-profiler-contract-test -j 4
-build-profiler/bin/umm-profiler-contract-test
 build-profiler/bin/umm-profiler-observer-test
+build-profiler/bin/umm-profiler-contract-test
 python3 tests/profiling/test_interface.py build-profiler/bin/umm-profiler
-python3 tools/profiler-cli/validate_capture.py /path/to/new-profile
-```
 
-The observer check uses CPU graphs to cover direct/scheduler/reused execution,
-thread isolation, synchronized output, abort and disable. A simulated RPC queue
-also checks completion before END, exact read counts, and work queued by an eval
-callback after child completion. CLI checks cover request
-validation, missing inputs without mock success and rejection of existing output.
-Real-model captures and paired observer-off controls are separate integration checks.
-
-Optional RPC integration check against an existing worker:
-
-The probe also executes an explicitly placed CPU/RPC/CPU graph three times with
-changed inputs. It verifies the host-resident final output inside scheduler END,
-without an additional RPC read that could hide an early completion callback.
-It validates batch ordering, new/cached graph execution, window state, overflow,
-empty windows and reuse. Pass `legacy` after an older worker endpoint to verify
-that profiling is rejected locally without sending a new command.
-
-```bash
+# 如已有可用的 RPC worker，可补跑 RPC 完成边界检查
 cmake --build build-profiler --target umm-profiler-rpc-fence-test -j 4
 GGML_RPC_NO_RDMA=1 build-profiler/bin/umm-profiler-rpc-fence-test 127.0.0.1:50052
 ```
 
-## Offline graph viewer
-
-[Graph Atlas](../../../utils/profiler-viewer/README.md) packages existing profiler output into an offline
-interactive page, with phase/device/length filters, folded layers, operator
-inspection, device placement and measured graph costs. It does not
-run the model or change scheduling. Previewed plans are clearly marked unexecuted.
-
-```bash
-python3 ../utils/profiler-viewer/export_viewer.py --profile /path/to/profile --out /path/to/graph-viewer.html
-```
-
-The viewer is maintained in the independent `workspace/utils` repository. To serve
-an existing profile directly, run from `workspace/utils`:
-
-```bash
-python3 profiler-viewer/serve.py --profile /path/to/profile --port 8787
-```
-
-Open `http://127.0.0.1:8787/`. Only the page and health endpoint are served; the
-profile directory is not exposed as a file server.
-
-RPC transport/cache costs depend on the endpoint and worker version. Protocol 6.2
-keeps immutable `WEIGHTS` uploads cached and sends large dynamic buffers without
-content hashing or disk caching; 6.0/6.1 workers keep the old behavior. Record the endpoint,
-SSH route, worker build and cache policy with the capture.
+Profiler 如何为后续调度提供数据，见 [设计文档](DESIGN.md)。

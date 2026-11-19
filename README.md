@@ -1,50 +1,6 @@
 # umm.cpp
 
-使用 C++ 实现的统一多模态推理框架。
-
-umm.cpp 将文本与图像生成整合到同一套命令行和 C++ API 中。[llama.cpp](https://github.com/ggml-org/llama.cpp) 负责文本分支，[stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)（sd.cpp）负责图像分支，umm.cpp 协调两个分支的执行与状态传递。
-
-## 模块设计
-
-两个引擎分别执行各自分支的计算，umm.cpp 负责组织跨分支流程。
-
-| 组件 | 职责 |
-| --- | --- |
-| **llama.cpp** | 执行理解分支，进行自回归文本生成 |
-| **sd.cpp** | 执行图像生成分支，负责像素流采样和图像解码 |
-| **umm.cpp** | 按模型组织提示词和图文执行顺序，传递分支间的状态，提供统一接口 |
-
-SenseNova U1 和 BAGEL 都采用 MoT 结构，将多模态推理分为语言和图像两个分支。U1 将理解前缀的注意力 K/V 状态从 llama.cpp 传给 sd.cpp。BAGEL 由 llama.cpp 处理文本、推理和视觉 token 的顺序，再通过模型专用的图像和潜变量接口交给 sd.cpp 执行扩散。umm.cpp 封装这些流程，让各模型使用统一的 CLI 和 C++ API。
-
-```mermaid
-flowchart LR
-    P[提示词] --> U["umm.cpp 统一 CLI / C++ API"]
-    X[输入图像] --> U
-    U --> L["llama.cpp 文本、推理与理解"]
-    L --> T[文本回答]
-    L --> H["umm.cpp 模型分支间的状态传递"]
-    X --> H
-    H --> S["sd.cpp 图像生成与编辑"]
-    S --> I[图像]
-```
-
-每个引擎管理自己执行的计算图和算子。接入新模型时，可以复用公共层，只需补充该模型的提示词格式、模型包组件及分支交接规则。两个引擎在同一个进程内共享 GGML，并分别执行各自的前向计算。
-
-### 源码目录
-
-| 目录 | 职责 |
-| --- | --- |
-| `src/inference/` | 模型包、推理会话和共用工作流接口 |
-| `src/inference/models/` | U1 和 BAGEL 的工作流及模型规则 |
-| `src/adapters/` | 对接 llama.cpp、sd.cpp 和 MTMD 视觉编码器，包括 K/V 状态传递 |
-| `src/scheduling/` | 执行策略选择、计算图放置和权重副本管理 |
-| `src/scheduling/policies/` | 本地 310P、远端 910B 和随机放置策略，每种策略一个实现文件 |
-| `src/runtime/` | 请求处理、HTTP 服务、运行监控和图像读写 |
-| `src/profiling/` | 采集计算图和分层计时并导出结果 |
-| `src/apps/` | CLI、会话程序和服务端入口 |
-| `include/` | 会话 API 及其公开类型 |
-| `tools/` | 分析工具的命令行入口、采集校验脚本和模型实验工具 |
-| `tests/` | 分析工具回归测试、后端冒烟测试和 RPC 隧道测试 |
+umm.cpp 是 C++ 多模态推理框架，提供命令行、HTTP 和 C++ API，支持文本生成、图像理解和生图。
 
 ## 支持的模型
 
@@ -52,22 +8,6 @@ flowchart LR
 | --- | --- |
 | [SenseNova U1 系列](https://github.com/OpenSenseNova/SenseNova-U1) | 首个接入的模型系列，当前实现和验证覆盖稠密版 SenseNova U1.5 |
 | [BAGEL-7B-MoT](https://huggingface.co/ByteDance-Seed/BAGEL-7B-MoT) | F16 文本生成、生图和图像理解已在昇腾 310P 上跑通。编辑模式可以执行，但生成的编辑结果仍会退化为噪声，质量尚未通过验证。使用 Q8_0 理解权重和 F16 生成权重可单卡生图。 |
-
-## 支持的模式
-
-| 模式 | 输出 |
-| --- | --- |
-| `text` | 自回归生成文本 |
-| `image` | 根据提示词生成图像 |
-| `think-image` | 先生成推理文本，再生成图像 |
-| `understand`、`think-understand` | 回答有关输入图像的问题 |
-| `edit`、`think-edit` | 编辑输入图像，可选择先推理 |
-
-## 平台支持
-
-本仓库已在 Linux 上验证 NVIDIA CUDA 和昇腾 CANN。SenseNova U1.5 8 步 LoRA V2 已在单张昇腾 310P3、CANN 8.5.0 上验证，生图配置为 1024 × 1024、Euler 8 步、CFG 1、shift 3。基础模型的 50 步结果保留为历史对照。
-
-模型计算图在 NPU 上执行。昇腾 310P 上的 BAGEL 单卡配置使用 Q8_0 理解权重和 F16 生成权重。CPU 负责分词、调度、文件读写和 PNG 编码等工作。已验证的昇腾配置及启动脚本见 [昇腾运行说明](scripts/ascend/README.md)。
 
 ## 构建与模型准备
 
@@ -79,7 +19,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j 8
 ```
 
-CUDA 构建加上 `-DGGML_CUDA=ON -DSD_CUDA=ON`。昇腾构建见 [CANN 运行环境](docker/README.runtime.md) 和 [昇腾运行说明](scripts/ascend/README.md)。通过 RPC 连接远端还需启用 `-DGGML_RPC=ON`。
+CUDA 构建加上 `-DGGML_CUDA=ON -DSD_CUDA=ON`。使用昇腾时，按对应指南构建和运行。
+
+- [本地 310P 部署](scripts/ascend/README.md)
+- [远端 910B RPC 部署和 JSONL 调用](scripts/rpc/README.md)
 
 已有模型包时，直接将其目录传给下文示例。转换模型时，先安装 Python 依赖。以 SenseNova U1.5 8 步 V2 为例：
 
@@ -109,6 +52,11 @@ build/bin/umm-cli --model /path/to/u1.5-v2 --mode understand \
 build/bin/umm-cli --model /path/to/u1.5-v2 --mode image \
   --prompt '白色背景上的红色立方体' --output cube.png \
   --width 1024 --height 1024 --steps 8 --cfg 1 --shift 3 --seed 42
+
+# 远端 910B，先按部署指南启动 worker 和 SSH 隧道
+build-rpc-client/bin/umm-cli --model /path/to/u1.5-v2 --mode text \
+  --execution-policy remote_910b --rpc-endpoint 127.0.0.1:50052 \
+  --prompt '用一句话介绍月球。' --max-tokens 64
 ```
 
 | 参数 | 用途 |
@@ -127,11 +75,11 @@ build/bin/umm-cli --model /path/to/u1.5-v2 --mode image \
 
 ### HTTP 服务调用
 
-先启动服务。示例使用本机 310P 和测试密钥。
+先按 [310P 部署指南](scripts/ascend/README.md) 构建并[进入映射了单卡的容器](scripts/ascend/README.md#直接使用容器)，再启动服务。示例使用测试密钥。
 
 ```bash
 export UMM_API_KEY=local-test-key
-build/bin/umm-server --model /path/to/u1.5-v2 \
+build-static-310p/bin/umm-server --model /model \
   --execution-policy local_310p --local-device CANN0 \
   --host 127.0.0.1 --port 8080 --served-model-name u15 \
   --api-key-env UMM_API_KEY --steps 8 --cfg 1 --shift 3
@@ -198,8 +146,8 @@ int main() {
 
 完整签名及默认值见 [session.h](include/session.h)。
 
-## 计算图分析工具
+## 工具
 
-可以用离线工具 [Graph Atlas 查看器](https://github.com/umm4c/utils/blob/master/profiler-viewer/README.md) 浏览已有采集结果，包括可折叠的层级、算子依赖和设备放置。
-
-[计算图分析工具](tools/profiler-cli/README.md) 在指定设备列表上重放模型和代表性负载，导出真实计算图、设备放置和同步主机计时。首版采集器支持在本地 310P 和已有的 CANN RPC worker 上运行 SenseNova U1。理解图另有层、块和可选算子计时。整图调度方案的合法性检查、设备内核计时和调度决策验证仍待完成。
+- [计算图分析与校验](tools/profiler-cli/README.md)
+- [随机放置文本对照](tools/README.random-model-run.md)
+- [310P 镜像重建、备份和恢复](docker/README.runtime.md)

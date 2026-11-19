@@ -1,161 +1,108 @@
-# Reproduce the 910B RPC worker
+# 远端昇腾 910B RPC 部署
 
-These scripts deploy the worker for `remote_910b`. Run `worker.sh` on the remote
-host and `tunnel.sh` on the client. They do not change host drivers, SSH credentials
-or other containers. The worker listens on loopback and maps one physical NPU.
+`remote_910b` 将理解、视觉编码和生图固定在远端单张 910B 上。客户端保留模型包，通过 RPC 向 worker 传输权重。下面分别在客户端和远端执行命令。
 
-## Validated environment and source
+## 准备 worker 源码和镜像
 
-The 2026-11-04 validation used aarch64, Ascend910B1 physical card 4, host driver
-24.1.0.3, and CANN 9.1.0/GCC 11 from
-`quay.io/ascend/vllm-ascend:v0.23.0.post1`. The example pins its observed image config
-ID. This ID verifies local image content; it is **not** a pullable registry manifest
-digest. Obtain the matching image with `docker pull` or `docker load`, and check
-`docker image inspect`. For an image archive, also record its SHA256. A different
-image/CANN version needs new validation; do not silently replace the expected ID.
-A registry digest can be used as RPC_IMAGE once verified to resolve to the same ID.
+worker 与客户端使用 **同一份 llama.cpp/GGML 源码**，包括 UMM 仓库锁定的子模块及 CANN 补丁。两端都使用 `GGML_MAX_NAME=160`。仅检查 RPC 协议版本不足以确认兼容。
 
-This deployment branch inherits the tested UMM implementation
-`cfe6e50386f76a6b53aaab0fdd2e4f986239952c`. Its submodules lock llama.cpp to
-`9897082a26924e96d3016907be1fa360fc44b0ac` and SD to
-`7ab496fba8e45ac8b1ccfa81ab9c15373682b59a`. Use the llama.cpp submodule of this
-checkout, including its CANN changes, for the server. RPC protocol 6.0.0 alone is
-insufficient to establish compatible operators. Both sides require GGML_MAX_NAME=160.
+在客户端仓库根目录执行。下面以 SSH 别名 `hw19` 为例，将远端路径统一替换为实际的专用目录。
 
-From the **client checkout**, initialize submodules and verify no local edits before
-synchronizing. Replace the example remote directory consistently in all commands:
-
-```sh
-git submodule update --init --recursive
-git rev-parse HEAD
+```bash
+git submodule update --init third_party/llama.cpp third_party/stable-diffusion.cpp
 git -C third_party/llama.cpp rev-parse HEAD
 git -C third_party/llama.cpp status --porcelain
 ssh hw19 'mkdir -p /path/to/umm-rpc-910b/llama.cpp /path/to/umm-rpc-910b/deploy'
-rsync -a --delete --exclude=.git --exclude='/build*/' \
+rsync -a --exclude=.git --exclude='/build*/' \
   third_party/llama.cpp/ hw19:/path/to/umm-rpc-910b/llama.cpp/
 rsync -a scripts/rpc/ hw19:/path/to/umm-rpc-910b/deploy/
 ```
 
-Use a dedicated destination: `--delete` makes its source mirror exact. Record the
-client `git rev-parse HEAD`, submodule commit, dirty status and source hashes with
-run artifacts. The remote copy has no Git directory. No model package is needed
-there; weights are sent over RPC and may be cached.
+使用新目录同步源码，避免沿用旧文件和构建缓存。若子模块有未提交修改，部署时同时记录这些差异。
 
-## Build and start on the remote host
+在远端准备与 [worker.env.example](worker.env.example) 所列 Image ID 匹配的镜像。已验证的组合为 aarch64、Ascend910B1、驱动 24.1.0.3 和 CANN 9.1.0，镜像标签为 `quay.io/ascend/vllm-ascend:v0.23.0.post1`。示例锁定的是本地 Image ID，可通过 `docker image inspect` 核对。更换镜像或驱动后重新完成三任务验收。
 
-Check `npu-smi info` and select an available card. Copy `worker.env.example` to an
-external file such as `$HOME/umm-rpc-worker.env`, set RPC_WORKDIR to the dedicated
-absolute remote path and choose RPC_NPU. Config files are trusted shell scripts.
-Do not edit the expected image ID merely to bypass a mismatch.
+## 构建和启动 worker
 
-```sh
-bash /path/to/umm-rpc-910b/deploy/worker.sh build "$HOME/umm-rpc-worker.env"
-bash /path/to/umm-rpc-910b/deploy/worker.sh start "$HOME/umm-rpc-worker.env"
-bash /path/to/umm-rpc-910b/deploy/worker.sh logs "$HOME/umm-rpc-worker.env"
+在远端用 `npu-smi info` 选一张空闲卡，再复制并编辑配置，至少设置 `RPC_WORKDIR` 和 `RPC_NPU`。配置文件是 shell 文件，保存在仓库外。
+
+```bash
+deploy=/path/to/umm-rpc-910b/deploy
+cp "$deploy/worker.env.example" "$HOME/umm-rpc-worker.env"
+# 编辑 $HOME/umm-rpc-worker.env，填写实际目录、空闲物理卡号和镜像身份
+bash "$deploy/worker.sh" build "$HOME/umm-rpc-worker.env"
+bash "$deploy/worker.sh" start "$HOME/umm-rpc-worker.env"
+bash "$deploy/worker.sh" logs "$HOME/umm-rpc-worker.env"
 ```
 
-Build uses Release, static libraries, `GGML_RPC=ON`, `GGML_CANN=ON`,
-`GGML_RPC_RDMA=OFF`, `SOC_TYPE=Ascend910B1`, `USE_ACL_GRAPH=OFF`, and C/C++
-`GGML_MAX_NAME=160`. It builds only ggml-rpc-server. Logs go to logs/build-worker.log.
-Use a fresh workdir when changing source or toolchain to avoid stale build outputs.
+脚本构建 `ggml-rpc-server`，构建日志写入 `RPC_WORKDIR/logs/build-worker.log`。默认芯片目标为 `Ascend910B1`，关闭 ACL Graph 和 RDMA。worker 映射单张物理卡，在容器内使用 `CANN0`，默认监听远端 `127.0.0.1:50052`。启动后核对设备枚举和饱和模式日志。
 
-Runtime maps davinciN, davinci_manager, hisi_hdc and devmm_svm; mounts the driver
-read-only and the workdir read-write. Host networking permits the SSH server to
-reach the loopback listener. CANN0 is the expected single-card logical name;
-confirm device enumeration and the worker's saturation startup message in logs.
-The protocol does not attest the remote hardware identity.
+| worker 设置 | 值及用途 |
+| --- | --- |
+| `GGML_RPC_NO_RDMA` | `1`，通过 TCP 通信 |
+| `GGML_CANN_Q8_NZ` | `0`，关闭 310P 专用 Q8 布局 |
+| `GGML_CANN_SATURATION` | `1`，保持已验证的 FP16 溢出饱和行为，U1.5 生图依赖此设置 |
+| `LLAMA_CACHE` | `/work/cache`，存放 RPC 权重缓存 |
+| `OMP_NUM_THREADS` | `1`，限制 worker 的 OpenMP 线程数 |
 
-Required environment:
+这些设置由 worker 脚本传入。客户端的环境变量无法修改远端进程的设置。停止时调用 `bash "$deploy/worker.sh" stop "$HOME/umm-rpc-worker.env"`。重新启动之前，只移除本次配置对应且已停止的旧容器。
 
-| Variable | Value | Reason |
-| --- | --- | --- |
-| GGML_RPC_NO_RDMA | 1 | TCP transport |
-| GGML_CANN_Q8_NZ | 0 | Disable 310P-specific layout |
-| GGML_CANN_SATURATION | 1 | Match finite F16 overflow behavior; required for validated image generation |
-| LLAMA_CACHE | /work/cache | RPC weight cache under cache/rpc |
-| OMP_NUM_THREADS | 1 | Worker host threading |
+## SSH 隧道与客户端构建
 
-The container has no restart policy. Stop with `worker.sh stop CONFIG`; to replace
-it, explicitly remove that stopped container with `docker rm NAME` before starting
-again. `status` and `logs` inspect the named container. Build/start refuse an image
-ID mismatch; start refuses an existing container name. No running service is
-replaced automatically. Never use these commands with another service's name.
+客户端准备好 SSH 别名和已验证的主机公钥后，在独立终端启动隧道。
 
-## Tunnel and three-task validation on the client
-
-Configure your existing SSH alias (for example hw19) with its private key and
-verified known_hosts entry. These files stay outside Git. Then run in a dedicated
-terminal:
-
-```sh
+```bash
 scripts/rpc/tunnel.sh hw19
 ```
 
-The tunnel binds 127.0.0.1:50052 and forwards to the remote loopback port. Set
-RPC_LOCAL_PORT/RPC_REMOTE_PORT to override. This host-SSH implementation provides
-the same forwarding as the validation's SSH container, without depending on a
-client container image. Closing it with Ctrl-C ends the tunnel. Worker stays up.
+默认把本地 `127.0.0.1:50052` 转发到远端 `127.0.0.1:50052`。通过 `RPC_LOCAL_PORT`、`RPC_REMOTE_PORT` 修改两端端口。按 Ctrl-C 关闭隧道，远端 worker 继续运行。
 
-Build the client using the RPC-only instructions in `docs/static-execution.md`
-inside the validated client CANN 8.5.0 environment (`umm-cann:8.5.0-mvp`). The
-historical client image ID is
-`sha256:8d9a763fb39a70b80540dd88e0129a59aa05c6dbf7bbf5a9d24452860f3ffd88`.
-The client build requires no local NPU. With the model package available locally:
+在客户端仓库根目录构建 RPC-only 版本。可在宿主机编译，或在能运行这些二进制的客户端容器中编译。使用容器访问宿主机的回环隧道时，应使用 host 网络。
 
-```sh
-export MODEL_DIR=/path/to/SenseNova-U1.5-8B-MoT-LoRA-8step-V2-Q8U-F16G-UMM
-export RPC_ENDPOINT=127.0.0.1:50052
-scripts/run-static.sh remote_910b text 'Describe the moon.'
-scripts/run-static.sh remote_910b understand 'Describe this image.' /path/to/input.png
-scripts/run-static.sh remote_910b image 'A red apple on a wooden table'
+```bash
+cmake -S . -B build-rpc-client -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_CANN=OFF -DGGML_RPC=ON -DGGML_RPC_RDMA=OFF
+cmake --build build-rpc-client --target umm-cli umm-session umm-server -j 8
 ```
 
-Runner defaults are 8192/4096/4096 context/batch/ubatch; generation is 1024x1024,
-8 steps, CFG 1, shift 3, seed 7. Repeat requests and check outputs. These runner
-commands create separate processes: additionally send two requests within one
-umm-session process to check persistent model/KV reuse (see the session interface
-in the main README). Record cold weight upload, warm request timing, output
-text/images, worker logs, `npu-smi info`, effective config, image IDs and source
-identities. Confirm no client NPU mapping and that the remote worker uses the
-chosen card. A connected socket alone is not a successful inference validation.
+客户端无需映射 NPU。使用下文的容器脚本时，在同一镜像中构建，默认镜像为 `umm-cann:8.5.0-mvp`。镜像管理见 [310P 运行镜像](../../docker/README.runtime.md)。
 
-Keep weights, RPC caches, builds, private configuration and raw run artifacts
-outside Git. Save artifacts in the benchmark results directory. This deployment
-commit provides reproducible commands; re-running against another environment
-still requires the three-task correctness checks.
+## 三任务验收
 
-## Independent private-route backup tunnel
+```bash
+export MODEL_DIR=/path/to/u1.5-v2
+export RPC_ENDPOINT=127.0.0.1:50052
+scripts/run-static.sh remote_910b text '用一句话介绍月球。'
+scripts/run-static.sh remote_910b understand '图中有什么？' /path/to/photo.png
+OUTPUT_DIR="$PWD/outputs/u15-remote" \
+  scripts/run-static.sh remote_910b image '白色背景上的红色立方体'
+```
 
-`private-tunnel.py` supervises a separate SSH process and local port (default
-50353 -> hw19 loopback 50053). It leaves 50052/50053 listeners and clients alone.
-The defaults use the verified private address 192.168.0.190 with the existing
-public host-key identity 1.95.177.112 and SSH alias hw19. Authentication and
-known_hosts stay outside the checkout; strict host checking remains enabled.
-It keeps AES-256-GCM and disables compression, agent and X11 forwarding.
+脚本各次启动独立进程，默认 context / batch / ubatch 为 `8192 / 4096 / 4096`，可用 `N_CTX`、`N_BATCH`、`N_UBATCH` 覆盖。直接调用 CLI、JSONL 或 HTTP 并选择 `remote_910b` 时，策略默认值是 `2048 / 512 / 256`。脚本默认生图配置为 1024 × 1024、8 步、CFG 1、shift 3、seed 7。
 
-```sh
+检查文本、图像理解答案和 PNG 是否符合预期。对照 worker 日志和远端 `npu-smi info` 确认实际用卡。记录两端版本、数值配置、首轮权重加载开销、后续请求耗时和输出。
+
+### 同一进程发送多条 JSONL 请求
+
+在能运行客户端二进制的环境中执行。一次启动 `umm-session`，从标准输入逐行提交 JSON。下面用两条短文本请求验证同一进程能复用已加载的模型。
+
+```bash
+build-rpc-client/bin/umm-session --model "$MODEL_DIR" \
+  --execution-policy remote_910b --rpc-endpoint "$RPC_ENDPOINT" \
+  --steps 8 --cfg 1 --shift 3 <<'JSONL'
+{"case_id":"text-1","task_class":"text_generation","content":[{"type":"text","value":"用一句话介绍月球。"}],"params":{"max_new_tokens":64}}
+{"case_id":"text-2","task_class":"text_generation","content":[{"type":"text","value":"用一句话介绍火星。"}],"params":{"max_new_tokens":64}}
+JSONL
+```
+
+标准输出先返回一条 `ready`，随后每条请求对应一条 `result`。检查 `case_id` 和 `status`，用 `timings_ms` 比较耗时。日志走标准错误。单图理解使用 `mixed_understanding`，`content` 的第一项为带 `path` 的图片。文生图使用 `image_generation`，在 `params` 提供 `width`、`height` 和 `seed`，并在请求顶层提供绝对 `.png` 路径 `output_path`。容器调用时路径以容器内为准。
+
+## 可选的独立私网隧道
+
+已有对应私网路由和 SSH 配置时，可单独运行 [private-tunnel.py](private-tunnel.py)。默认监听本地 `50353`，转发到远端 `50053`。修改路由和 SSH 参数前先查看脚本的 `--help`。
+
+```bash
 python3 scripts/rpc/private-tunnel.py --state-dir "$HOME/.local/state/umm-rpc-private"
 ```
 
-After each connection/reconnection it runs `true` through that exact SSH master,
-then verifies RPC HELLO and the single-device count. A private temporary control
-socket and a state-directory lock identify the owned process. `state.json`
-reports readiness, child PID, route, worker protocol and connection generation.
-SSH keepalives monitor the established channel; the tool does not periodically
-probe an in-use serial worker. A busy worker can delay startup readiness. A valid
-HELLO does not attest hardware, weights or inference correctness.
-
-Use a dedicated terminal or install the supplied user-service example after
-replacing `/path/to/umm.cpp`. The Python supervisor reconnects failed SSH children;
-the user service can restart a failed supervisor. Stop the supervisor with SIGTERM
-or stop its user service: it terminates only its SSH child. Do not kill a PID from
-an old state file without verifying its process identity. No service is installed
-or enabled automatically by these scripts.
-
-Validate large candidate boundaries and full requests separately before choosing
-this endpoint in a client. Private-route FFN transfer improvements do not imply
-that a fixed small-boundary full-model plan becomes faster. The 6.1 worker on
-50053 retains its old cache policy even when reached through the new route;
-6.2 dynamic-upload optimization requires a matching new worker. Preserve endpoint,
-SSH connection state, worker binary and cache policy with new profiler costs.
-Run `python3 tests/rpc/test_private_tunnel.py` for protocol/SSH command checks.
+连接状态、worker 协议版本和连接编号见状态目录的 `state.json`。确认就绪后用 `127.0.0.1:50353` 重新验收推理。如需交给 systemd 管理，可参考 [用户服务示例](private-tunnel.service.example)。隧道的版本检查不能替代实际推理验收。
