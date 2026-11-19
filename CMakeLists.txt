@@ -42,10 +42,12 @@ target_link_libraries(llama.cpp PUBLIC llama PRIVATE umm-scheduling)
 # UMM runtime -----------------------------------------------------------------
 add_library(umm
     src/inference/session.cpp
-    src/adapters/diffusion-bridge.cpp
+    src/adapters/diffusion-adapter.cpp
     src/inference/model-workflow.cpp
+    src/inference/models/u1-workflow.cpp
+    src/inference/models/bagel-workflow.cpp
     src/inference/model-package.cpp
-    src/adapters/sd-cpp-adapter.cpp
+    src/adapters/vision-encoder.cpp
 )
 target_include_directories(umm PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" PRIVATE src)
 target_link_libraries(umm PRIVATE llama.cpp sd.cpp umm-scheduling)

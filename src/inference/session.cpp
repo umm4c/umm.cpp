@@ -2,26 +2,21 @@
 #include "session.h"
 #include "scheduling/execution-policy.h"
 
-#include "adapters/diffusion-bridge.h"
+#include "adapters/diffusion-adapter.h"
+#include "adapters/vision-encoder.h"
+#include "models/u1-rules.h"
 #include "ggml-backend.h"
 #include "adapters/llama-cpp-adapter.h"
 #include "model-package.h"
 #include "model-workflow.h"
-#include "stable-diffusion.h"
-#include "adapters/sd-cpp-adapter.h"
 
 #include <algorithm>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <stdexcept>
 #include <utility>
 
 namespace umm {
 
 namespace {
-
-thread_local request_metrics * active_log_metrics = nullptr;
 
 struct active_metric_scope {
     request_metrics *& slot;
@@ -31,30 +26,12 @@ struct active_metric_scope {
     ~active_metric_scope() { slot = previous; }
 };
 
-void log_stable_diffusion(enum sd_log_level_t, const char * message, void *) {
-    std::fputs(message, stderr);
-    if (active_log_metrics) {
-        const char * marker = std::strstr(message, "decode_first_stage completed, taking ");
-        double seconds = 0;
-        if (marker && std::sscanf(marker, "decode_first_stage completed, taking %lfs", &seconds) == 1 &&
-            seconds >= 0) {
-            if (active_log_metrics->vae_decode_ms < 0) active_log_metrics->vae_decode_ms = 0;
-            active_log_metrics->vae_decode_ms += seconds * 1000;
-        }
-    }
-}
-
 void validate_edit_dimensions(const image_options & options) {
     const bool width_set = options.width != 0;
     const bool height_set = options.height != 0;
     if (width_set != height_set) {
         throw std::invalid_argument("Editing output width and height must be provided together");
     }
-}
-
-bool has_image_prefix_data(const sd_kv_prefix_t & prefix) {
-    return prefix.token_ids && prefix.token_count &&
-           prefix.keys && prefix.values && prefix.layer_count;
 }
 
 int context_size_for_single_cann_u1(model_family family, const std::string & understanding_backend,
@@ -65,18 +42,6 @@ int context_size_for_single_cann_u1(model_family family, const std::string & und
     }
     // Limit the scheduler reservation while both U1.5 GGUFs share one 310P.
     return 2048;
-}
-
-std::vector<llama_pos> image_prefix_positions(const sd_kv_prefix_t & prefix) {
-    if (prefix.positions) {
-        return {prefix.positions, prefix.positions + prefix.token_count};
-    }
-
-    std::vector<llama_pos> positions(prefix.token_count);
-    for (size_t i = 0; i < positions.size(); ++i) {
-        positions[i] = llama_pos(i);
-    }
-    return positions;
 }
 
 } // namespace
@@ -93,9 +58,9 @@ struct session::impl {
     std::string generation_max_vram;
     std::string vision_backend;
     std::string vae_model;
-    std::string sd_vision_model;
-    std::unique_ptr<sd_cpp_adapter> sd_vision_adapter;
-    std::unique_ptr<sd_ctx_t, decltype(&free_sd_ctx)> image_engine{nullptr, free_sd_ctx};
+    std::string vision_model;
+    std::unique_ptr<bagel_vision_encoder> vision_encoder;
+    std::unique_ptr<diffusion_adapter> image_engine;
     request_metrics * active_metrics = nullptr;
 
     impl(model_package package_, const std::string & understanding_backend,
@@ -103,13 +68,11 @@ struct session::impl {
          const std::string & vision_backend_, int context_size, int batch_size, int microbatch_size,
          const understanding_schedule & schedule);
 
-    void load_image_engine();
-    void append_image(const image_input & image);
-    void append_native_image(const image_input & image);
-    void append_vision_image(const image_input & image);
+    diffusion_adapter & diffusion();
+    void append_u1_image(const image_input & image);
+    void append_bagel_image(const image_input & image);
     void transfer_prefix(conditioning_slot slot);
     void append_latent_image(const image_input & image, int64_t seed);
-    void import_image_prefix(const sd_kv_prefix_t & prefix);
     workflow_context workflow_context_for_request();
 };
 
@@ -131,7 +94,7 @@ session::impl::impl(model_package package_, const std::string & understanding_ba
       generation_max_vram(generation_max_vram_),
       vision_backend(vision_backend_),
       vae_model(package.component("vae")),
-      sd_vision_model(package.component("vision")) {
+      vision_model(package.component("vision")) {
     if (package.family != model_family::unknown && package.family != language_model.family()) {
         throw std::runtime_error("Model package architecture does not match its understanding GGUF");
     }
@@ -143,61 +106,22 @@ session::impl::impl(model_package package_, const std::string & understanding_ba
 
 // Image and diffusion plumbing ---------------------------------------------
 
-void session::impl::load_image_engine() {
-    if (image_engine) {
-        return;
-    }
-    if (generation_model.empty()) {
-        throw std::runtime_error("Provide the generation checkpoint for image output");
-    }
-
-    sd_ctx_params_t params;
-    sd_ctx_params_init(&params);
-    params.model_path = generation_model.c_str();
-    params.vae_path = vae_model.empty() ? nullptr : vae_model.c_str();
-    params.n_threads = 8;
-    params.enable_mmap = true;
-    const bool multi_device = generation_backend.find('&') != std::string::npos;
-    const bool cann = backend_uses_cann(generation_backend) ||
-                      generation_backend.find("CANN") != std::string::npos ||
-                      generation_backend.find("cann") != std::string::npos;
-    const bool disable_flash = cann || std::getenv("UMM_DISABLE_FLASH_ATTN") != nullptr;
-    params.flash_attn = params.diffusion_flash_attn = !disable_flash;
-    params.backend = generation_backend.empty() ? nullptr : generation_backend.c_str();
-    params.params_backend = generation_backend.empty() || multi_device ? nullptr : generation_backend.c_str();
-    params.split_mode = multi_device ? "layer" : nullptr;
-    params.max_vram = generation_max_vram.empty() ? nullptr : generation_max_vram.c_str();
-    params.external_kv_prefix = true;
-
-    if (language_model.family() == model_family::bagel) {
-        // sd.cpp loads the understanding GGUF under its private LLM prefix.
-        params.llm_path = package.component("understanding").c_str();
-    }
-
-    const auto start = metrics_clock::now();
-    image_engine.reset(new_sd_ctx(&params));
+diffusion_adapter & session::impl::diffusion() {
     if (!image_engine) {
-        throw std::runtime_error("Could not load generation checkpoint");
+        image_engine = std::make_unique<diffusion_adapter>(
+            generation_model, vae_model,
+            workflow->diffusion_uses_understanding_weights() ? package.component("understanding") : std::string{},
+            generation_backend, generation_max_vram, active_metrics);
     }
-    if (active_metrics) active_metrics->generation_model_load_ms = metrics_elapsed_ms(start);
+    return *image_engine;
 }
 
-void session::impl::append_image(const image_input & image) {
-    if (language_model.family() == model_family::sensenova_u1) {
-        // U1 carries its image encoder in the generation/diffusion side.
-        append_native_image(image);
-        return;
-    }
-    // BAGEL supplies vision weights as a separate model-package component.
-    append_vision_image(image);
-}
-
-void session::impl::append_native_image(const image_input & image) {
-    load_image_engine();
+void session::impl::append_u1_image(const image_input & image) {
+    auto & image_adapter = diffusion();
     const auto start = metrics_clock::now();
     const auto stride = model_descriptor_for(model_family::sensenova_u1).image_stride;
     profiling::phase_scope profile_scope("vision_encode");
-    const auto embeddings = encode_u1_image_with_diffusion(image_engine.get(), image);
+    const auto embeddings = image_adapter.encode_u1_image(image);
     if (active_metrics) {
         active_metrics->image_encoder_ms = std::max(0.0, active_metrics->image_encoder_ms) + metrics_elapsed_ms(start);
     }
@@ -210,19 +134,19 @@ void session::impl::append_native_image(const image_input & image) {
     }
 }
 
-void session::impl::append_vision_image(const image_input & image) {
+void session::impl::append_bagel_image(const image_input & image) {
     if (!model_supports(language_model.family(), model_capability::understand) ||
-        sd_vision_model.empty()) {
+        vision_model.empty()) {
         throw std::runtime_error("Image understanding requires a model package with vision weights");
     }
-    if (!sd_vision_adapter) {
+    if (!vision_encoder) {
         const auto load_start = metrics_clock::now();
-        sd_vision_adapter = create_sd_cpp_adapter(language_model.family(), sd_vision_model, vision_backend);
+        vision_encoder = std::make_unique<bagel_vision_encoder>(vision_model, vision_backend);
         if (active_metrics) active_metrics->vision_model_load_ms = metrics_elapsed_ms(load_start);
     }
     const auto start = metrics_clock::now();
     const auto before = language_model.tokens().size();
-    language_model.append_bagel_image_embeddings(sd_vision_adapter->encode(image));
+    language_model.append_bagel_image_embeddings(vision_encoder->encode(image));
     if (active_metrics) {
         active_metrics->vision_encode_ms =
             std::max(0.0, active_metrics->vision_encode_ms) + metrics_elapsed_ms(start);
@@ -231,60 +155,36 @@ void session::impl::append_vision_image(const image_input & image) {
 }
 
 void session::impl::transfer_prefix(conditioning_slot slot) {
-    const auto prefix = language_model.export_prefix();
-    const sd_kv_prefix_t data{prefix.tokens.data(), prefix.tokens.size(), prefix.keys.data(), prefix.values.data(),
-                              prefix.keys.size(), prefix.positions.data()};
-    if (!set_kv_prefix(image_engine.get(), slot, data)) {
-        throw std::runtime_error("Could not transfer understanding prefix to generation");
-    }
+    auto & image_adapter = diffusion();
+    image_adapter.set_prefix(slot, language_model.export_prefix());
 }
 
 void session::impl::append_latent_image(const image_input & image, int64_t seed) {
     transfer_prefix(conditioning_slot::conditional);
-
-    const sd_image_t input{uint32_t(image.width), uint32_t(image.height), 3,
-                           const_cast<uint8_t *>(image.rgb.data())};
-    sd_kv_prefix_t prefix{};
-    if (!encode_image_prefix(image_engine.get(), conditioning_slot::conditional, input, seed, prefix)) {
-        throw std::runtime_error("Could not encode image into generation prefix");
-    }
-    if (!has_image_prefix_data(prefix)) {
-        throw std::runtime_error("Image prefix is incomplete");
-    }
-    import_image_prefix(prefix);
-}
-
-void session::impl::import_image_prefix(const sd_kv_prefix_t & prefix) {
-    auto positions = image_prefix_positions(prefix);
-    const std::vector<ggml_tensor *> keys(prefix.keys, prefix.keys + prefix.layer_count);
-    const std::vector<ggml_tensor *> values(prefix.values, prefix.values + prefix.layer_count);
-    const auto staged = kv_prefix::copy_to_host({prefix.token_ids, prefix.token_ids + prefix.token_count},
-                                                 std::move(positions), keys, values);
-    language_model.import_prefix(staged);
+    const auto prefix = diffusion().append_image_to_prefix(conditioning_slot::conditional, image, seed);
+    language_model.import_prefix(prefix);
 }
 
 workflow_context session::impl::workflow_context_for_request() {
     workflow_context context{language_model};
     context.metrics = active_metrics;
-    context.load_image_engine = [this] { load_image_engine(); };
-    context.image_engine = [this] { return image_engine.get(); };
+    context.diffusion = [this]() -> diffusion_adapter & { return diffusion(); };
     context.transfer_prefix = [this](conditioning_slot slot) { transfer_prefix(slot); };
     context.append_latent_image = [this](const image_input & image, int64_t seed) {
         append_latent_image(image, seed);
     };
-    context.append_vision_image = [this](const image_input & image) {
-        append_image(image);
-    };
+    context.append_u1_image = [this](const image_input & image) { append_u1_image(image); };
+    context.append_bagel_image = [this](const image_input & image) { append_bagel_image(image); };
     context.encode_u1_prefill_image = [this](const image_input & image) {
-        load_image_engine();
+        auto & image_adapter = diffusion();
         const auto start = metrics_clock::now();
         profiling::phase_scope profile_scope("vision_encode");
-        auto embeddings = encode_u1_image_with_diffusion(image_engine.get(), image);
+        auto embeddings = image_adapter.encode_u1_image(image);
         if (active_metrics) {
             const auto duration = metrics_elapsed_ms(start);
             active_metrics->image_encoder_ms = std::max(0.0, active_metrics->image_encoder_ms) + duration;
             active_metrics->vision_encode_ms = std::max(0.0, active_metrics->vision_encode_ms) + duration;
-            active_metrics->vision_tokens += size_t(image.width / 32) * (image.height / 32) + 2;
+            active_metrics->vision_tokens += size_t(image.width / u1_rules::image_stride) * (image.height / u1_rules::image_stride) + 2;
         }
         return embeddings;
     };
@@ -314,7 +214,7 @@ session::session(const std::string & model,
     auto package = resolve_model(model, generation_model);
     ggml_backend_load_all();
     llama_backend_init();
-    sd_set_log_callback(log_stable_diffusion, nullptr);
+    diffusion_adapter::install_log_callback();
     impl_ = std::make_unique<impl>(std::move(package), understanding_backend, generation_backend,
                                   generation_max_vram, vision_backend,
                                   context_size, batch_size, microbatch_size, schedule);
@@ -374,7 +274,7 @@ std::string session::understand(const image_input & image, const std::string & p
 
     active_metric_scope binding(impl_->active_metrics, metrics);
     const auto preprocess_start = metrics_clock::now();
-    const auto prepared = prepare_image_input(impl_->language_model.family(), image);
+    const auto prepared = impl_->workflow->prepare_image(image);
     if (metrics) metrics->input_preprocess_ms = metrics_elapsed_ms(preprocess_start);
     if (metrics) metrics->inference_start = metrics_clock::now();
     auto context = impl_->workflow_context_for_request();
@@ -393,7 +293,7 @@ std::string session::understand_sequence(const std::vector<understanding_segment
     prepared.reserve(content.size());
     for (const auto & segment : content) {
         if (const auto * image = std::get_if<image_input>(&segment)) {
-            prepared.emplace_back(prepare_image_input(impl_->language_model.family(), *image));
+            prepared.emplace_back(impl_->workflow->prepare_image(*image));
         } else {
             prepared.emplace_back(std::get<std::string>(segment));
         }
@@ -413,7 +313,6 @@ image_result session::image(const std::string & prompt, const image_options & op
     }
 
     active_metric_scope binding(impl_->active_metrics, metrics);
-    active_metric_scope log_binding(active_log_metrics, metrics);
     if (metrics) metrics->inference_start = metrics_clock::now();
     auto context = impl_->workflow_context_for_request();
     return impl_->workflow->generate(context, prompt, options, nullptr);
@@ -425,7 +324,7 @@ image_result session::edit(const image_input & image, const std::string & prompt
         throw std::invalid_argument("Image editing is not supported by the selected model");
     }
 
-    const auto prepared = prepare_image_input(impl_->language_model.family(), image);
+    const auto prepared = impl_->workflow->prepare_image(image);
     auto options = requested;
     validate_edit_dimensions(requested);
     if (options.width == 0) {

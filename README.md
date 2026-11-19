@@ -34,8 +34,9 @@ flowchart LR
 
 | 目录 | 职责 |
 | --- | --- |
-| `src/inference/` | 模型包、推理会话和多模态工作流 |
-| `src/adapters/` | 对接 llama.cpp 和 sd.cpp，包括 K/V 状态传递 |
+| `src/inference/` | 模型包、推理会话和共用工作流接口 |
+| `src/inference/models/` | U1 和 BAGEL 的工作流及模型规则 |
+| `src/adapters/` | 对接 llama.cpp、sd.cpp 和 MTMD 视觉编码器，包括 K/V 状态传递 |
 | `src/scheduling/` | 执行策略选择、计算图放置和权重副本管理 |
 | `src/scheduling/policies/` | 本地 310P、远端 910B 和随机放置策略，每种策略一个实现文件 |
 | `src/runtime/` | 请求处理、HTTP 服务、运行监控和图像读写 |

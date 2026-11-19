@@ -1,6 +1,9 @@
 #include "llama-cpp-adapter.h"
 #include "llama-cpp-prefill.h"
 
+#include "inference/models/bagel-rules.h"
+#include "inference/models/u1-rules.h"
+
 #include "ggml-alloc.h"
 #include "llama-context.h"
 
@@ -29,7 +32,7 @@ void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> &
     const auto * traits = ggml_get_type_traits(table->type);
     const auto row_bytes = ggml_row_size(table->type, dim);
     std::vector<uint8_t> row(row_bytes);
-    const auto boundary = tokenize("<|vision_start|><|vision_end|>");
+    const auto boundary = tokenize(bagel_rules::vision_boundaries);
     if (boundary.size() != 2) throw std::runtime_error("Missing BAGEL image boundary tokens");
     for (int i = 0; i < 2; ++i) {
         ggml_backend_tensor_get(table, row.data(), boundary[i] * row_bytes, row_bytes);
@@ -59,14 +62,15 @@ void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> &
     tokens_.resize(offset + n, LLAMA_TOKEN_NULL);
     tokens_[offset] = boundary.front();
     tokens_.back() = boundary.back();
-    positions_.insert(positions_.end(), n, next_position_++);
+    positions_.insert(positions_.end(), n, next_position_);
+    next_position_ += bagel_rules::image_position_count;
     has_logits_ = true;
 }
 
 void llama_cpp_adapter::append_u1_image_embeddings(const std::vector<float> & embeddings,
                                                    int grid_width, int grid_height,
                                                    bool need_logits, request_metrics * metrics) {
-    const auto start = tokenize("<img>");
+    const auto start = tokenize(u1_rules::image_start);
     if (start.size() != 1) {
         throw std::runtime_error("Missing SenseNova U1 image start token");
     }
@@ -76,7 +80,7 @@ void llama_cpp_adapter::append_u1_image_embeddings(const std::vector<float> & em
 
 void llama_cpp_adapter::append_u1_generated_image_embeddings(const std::vector<float> & embeddings,
                                                              int grid_width, int grid_height) {
-    const auto start = tokenize("<img>");
+    const auto start = tokenize(u1_rules::image_start);
     if (start.size() != 1 || tokens_.empty() || tokens_.back() != start.front()) {
         throw std::runtime_error("Generated image must follow an appended <img> token");
     }
@@ -100,7 +104,7 @@ void llama_cpp_adapter::append_u1_image_body(const std::vector<float> & embeddin
     if (family_ != model_family::sensenova_u1) {
         throw std::invalid_argument("Spatial image embeddings are only supported by SenseNova U1");
     }
-    const auto start_token = tokenize("<img>");
+    const auto start_token = tokenize(u1_rules::image_start);
     if (start_token.size() != 1 || tokens_.empty() || tokens_.back() != start_token.front()) {
         throw std::runtime_error("Image embeddings must follow an appended <img> token");
     }
@@ -117,9 +121,10 @@ void llama_cpp_adapter::append_u1_image_body(const std::vector<float> & embeddin
     const llama_pos temporal = next_position_;
     std::vector<llama_pos> positions(image_tokens * 4, 0);
     for (size_t i = 0; i < image_tokens; ++i) {
-        positions[i] = temporal;
-        positions[image_tokens + i] = static_cast<llama_pos>(i / grid_width);
-        positions[2 * image_tokens + i] = static_cast<llama_pos>(i % grid_width);
+        const auto axes = u1_rules::image_position(temporal, i, grid_width);
+        for (size_t axis = 0; axis < axes.size(); ++axis) {
+            positions[axis * image_tokens + i] = axes[axis];
+        }
     }
     std::vector<int32_t> seq_counts(image_tokens, 1);
     llama_seq_id sequence = 0;
@@ -145,8 +150,8 @@ void llama_cpp_adapter::append_u1_image_body(const std::vector<float> & embeddin
 
     tokens_.insert(tokens_.end(), image_tokens, LLAMA_TOKEN_NULL);
     positions_.insert(positions_.end(), image_tokens, temporal);
-    next_position_ = temporal + 1;
-    const auto end = tokenize("</img>");
+    next_position_ = temporal + u1_rules::image_position_count;
+    const auto end = tokenize(u1_rules::image_end);
     if (end.size() != 1) {
         throw std::runtime_error("Missing SenseNova U1 image end token");
     }
@@ -270,24 +275,24 @@ void llama_cpp_adapter::append_u1_mixed(const std::vector<u1_prefill_segment> & 
                 if (ids.size() == limit) flush();
                 ids.push_back(token);
                 // SenseNova leaves text spatial axes at zero.
-                axes.push_back({next_position_, 0, 0, 0});
+                axes.push_back(u1_rules::text_position(next_position_));
                 input.resize(input.size() + dim, 0.0f);
                 ++next_position_;
             }
         } else {
             const size_t n = segment.embeddings.size() / dim;
             if (ids.size() + n > limit) flush();
-            const auto start_token = tokenize("<img>");
+            const auto start_token = tokenize(u1_rules::image_start);
             const auto previous = ids.empty() ? (tokens_.empty() ? LLAMA_TOKEN_NULL : tokens_.back()) : ids.back();
             if (start_token.size() != 1 || previous != start_token.front()) {
                 throw std::invalid_argument("Mixed image must follow <img>");
             }
             for (size_t i = 0; i < n; ++i) {
                 ids.push_back(LLAMA_TOKEN_NULL);
-                axes.push_back({next_position_, llama_pos(i / segment.grid_width), llama_pos(i % segment.grid_width), 0});
+                axes.push_back(u1_rules::image_position(next_position_, i, segment.grid_width));
             }
             input.insert(input.end(), segment.embeddings.begin(), segment.embeddings.end());
-            ++next_position_;
+            next_position_ += u1_rules::image_position_count;
             contains_image = true;
         }
     }

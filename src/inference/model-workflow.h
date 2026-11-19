@@ -1,6 +1,5 @@
 #pragma once
 
-#include "adapters/diffusion-bridge.h"
 #include "model-registry.h"
 #include "session.h"
 
@@ -8,11 +7,11 @@
 #include <memory>
 #include <string>
 
-struct sd_ctx_t;
-
 namespace umm {
 
 class llama_cpp_adapter;
+class diffusion_adapter;
+enum class conditioning_slot;
 
 struct workflow_context {
     // Shared runtime state plus model-independent operations supplied by
@@ -20,11 +19,11 @@ struct workflow_context {
     // The llama.cpp adapter is the language-model side of the workflow.
     llama_cpp_adapter & language_model;
     request_metrics * metrics = nullptr;
-    std::function<void()> load_image_engine;
-    std::function<sd_ctx_t *()> image_engine;
+    std::function<diffusion_adapter &()> diffusion;
     std::function<void(conditioning_slot)> transfer_prefix;
     std::function<void(const image_input &, int64_t)> append_latent_image;
-    std::function<void(const image_input &)> append_vision_image;
+    std::function<void(const image_input &)> append_u1_image;
+    std::function<void(const image_input &)> append_bagel_image;
     std::function<std::vector<float>(const image_input &)> encode_u1_prefill_image;
 };
 
@@ -32,6 +31,8 @@ class model_workflow {
 public:
     virtual ~model_workflow();
     virtual model_family family() const = 0;
+    virtual image_input prepare_image(const image_input & image) const = 0;
+    virtual bool diffusion_uses_understanding_weights() const { return false; }
     // Format a prompt-only request for the model's tokenizer/chat template.
     virtual std::string text_prompt(const std::string & prompt) const = 0;
     // Answer a question conditioned on an input image.
@@ -47,6 +48,14 @@ public:
                                          const image_options & options, int max_text_tokens,
                                          int max_images);
 };
+
+namespace workflow_detail {
+void begin_text_decode(workflow_context & context);
+void note_text_token(workflow_context & context, bool end);
+void finish_text_decode(workflow_context & context);
+void finish_conditioning(workflow_context & context, size_t input_tokens);
+image_options normalize_image_options(model_family family, const image_options & requested);
+}
 
 // Construct the workflow matching the resolved model family.
 std::unique_ptr<model_workflow> create_model_workflow(model_family family);
