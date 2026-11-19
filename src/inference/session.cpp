@@ -4,13 +4,12 @@
 
 #include "adapters/diffusion-adapter.h"
 #include "adapters/vision-encoder.h"
-#include "models/u1-rules.h"
+#include "session-config.h"
 #include "ggml-backend.h"
 #include "adapters/llama-cpp-adapter.h"
 #include "model-package.h"
 #include "model-workflow.h"
 
-#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -33,16 +32,6 @@ void validate_edit_dimensions(const image_options & options) {
     if (width_set != height_set) {
         throw std::invalid_argument("Editing output width and height must be provided together");
     }
-}
-
-int context_size_for_single_cann_u1(model_family family, const std::string & understanding_backend,
-                                    const std::string & generation_backend) {
-    if (family != model_family::sensenova_u1 || understanding_backend != generation_backend ||
-        !backend_uses_cann(understanding_backend)) {
-        return 0;
-    }
-    // Limit the scheduler reservation while both U1.5 GGUFs share one 310P.
-    return 2048;
 }
 
 } // namespace
@@ -69,10 +58,8 @@ struct session::impl {
          int batch_size, int microbatch_size, const understanding_schedule & schedule);
 
     diffusion_adapter & diffusion();
-    void append_u1_image(const image_input & image);
-    void append_bagel_image(const image_input & image);
+    bagel_vision_encoder & vision();
     void transfer_prefix(conditioning_slot slot);
-    void append_latent_image(const image_input & image, int64_t seed);
     workflow_context workflow_context_for_request();
 };
 
@@ -84,10 +71,8 @@ session::impl::impl(model_package package_, const std::string & understanding_ba
                     const understanding_schedule & schedule)
     : package(std::move(package_)),
       language_model(package.component("understanding"),
-                     context_size
-                         ? context_size
-                         : context_size_for_single_cann_u1(package.family, understanding_backend, generation_backend_),
-                     99, false, understanding_backend, batch_size, microbatch_size, schedule.secondary_backend),
+                     resolve_context_size(package.family, understanding_backend, generation_backend_, context_size), 99,
+                     false, understanding_backend, batch_size, microbatch_size, schedule.secondary_backend),
       workflow(create_model_workflow(language_model.family())), generation_model(package.component("generation")),
       generation_backend(generation_backend_), generation_max_vram(generation_max_vram_),
       vision_backend(vision_backend_), vae_model(package.component("vae")), vision_model(package.component("vision")) {
@@ -112,24 +97,7 @@ diffusion_adapter & session::impl::diffusion() {
     return *image_engine;
 }
 
-void session::impl::append_u1_image(const image_input & image) {
-    auto & image_adapter = diffusion();
-    const auto start = metrics_clock::now();
-    const auto stride = model_descriptor_for(model_family::sensenova_u1).image_stride;
-    profiling::phase_scope profile_scope("vision_encode");
-    const auto embeddings = image_adapter.encode_u1_image(image);
-    if (active_metrics) {
-        active_metrics->image_encoder_ms = std::max(0.0, active_metrics->image_encoder_ms) + metrics_elapsed_ms(start);
-    }
-    language_model.append_u1_image_embeddings(embeddings, image.width / stride, image.height / stride, true,
-                                              active_metrics);
-    if (active_metrics) {
-        active_metrics->vision_encode_ms = std::max(0.0, active_metrics->vision_encode_ms) + metrics_elapsed_ms(start);
-        active_metrics->vision_tokens += size_t(image.width / stride) * (image.height / stride) + 2;
-    }
-}
-
-void session::impl::append_bagel_image(const image_input & image) {
+bagel_vision_encoder & session::impl::vision() {
     if (!model_supports(language_model.family(), model_capability::understand) || vision_model.empty()) {
         throw std::runtime_error("Image understanding requires a model package with vision weights");
     }
@@ -139,13 +107,7 @@ void session::impl::append_bagel_image(const image_input & image) {
         if (active_metrics)
             active_metrics->vision_model_load_ms = metrics_elapsed_ms(load_start);
     }
-    const auto start = metrics_clock::now();
-    const auto before = language_model.tokens().size();
-    language_model.append_bagel_image_embeddings(vision_encoder->encode(image));
-    if (active_metrics) {
-        active_metrics->vision_encode_ms = std::max(0.0, active_metrics->vision_encode_ms) + metrics_elapsed_ms(start);
-        active_metrics->vision_tokens += language_model.tokens().size() - before;
-    }
+    return *vision_encoder;
 }
 
 void session::impl::transfer_prefix(conditioning_slot slot) {
@@ -153,34 +115,12 @@ void session::impl::transfer_prefix(conditioning_slot slot) {
     image_adapter.set_prefix(slot, language_model.export_prefix());
 }
 
-void session::impl::append_latent_image(const image_input & image, int64_t seed) {
-    transfer_prefix(conditioning_slot::conditional);
-    const auto prefix = diffusion().append_image_to_prefix(conditioning_slot::conditional, image, seed);
-    language_model.import_prefix(prefix);
-}
-
 workflow_context session::impl::workflow_context_for_request() {
     workflow_context context{language_model};
     context.metrics = active_metrics;
     context.diffusion = [this]() -> diffusion_adapter & { return diffusion(); };
     context.transfer_prefix = [this](conditioning_slot slot) { transfer_prefix(slot); };
-    context.append_latent_image = [this](const image_input & image, int64_t seed) { append_latent_image(image, seed); };
-    context.append_u1_image = [this](const image_input & image) { append_u1_image(image); };
-    context.append_bagel_image = [this](const image_input & image) { append_bagel_image(image); };
-    context.encode_u1_prefill_image = [this](const image_input & image) {
-        auto & image_adapter = diffusion();
-        const auto start = metrics_clock::now();
-        profiling::phase_scope profile_scope("vision_encode");
-        auto embeddings = image_adapter.encode_u1_image(image);
-        if (active_metrics) {
-            const auto duration = metrics_elapsed_ms(start);
-            active_metrics->image_encoder_ms = std::max(0.0, active_metrics->image_encoder_ms) + duration;
-            active_metrics->vision_encode_ms = std::max(0.0, active_metrics->vision_encode_ms) + duration;
-            active_metrics->vision_tokens +=
-                size_t(image.width / u1_rules::image_stride) * (image.height / u1_rules::image_stride) + 2;
-        }
-        return embeddings;
-    };
+    context.vision = [this]() -> bagel_vision_encoder & { return vision(); };
     return context;
 }
 

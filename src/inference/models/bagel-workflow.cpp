@@ -6,6 +6,7 @@
 
 #include "adapters/vision-encoder.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -74,6 +75,18 @@ std::string bagel_reasoning_prompt(bool generate_image) {
            "The reasoning process is enclosed within <think> </think> tags, i.e. <think> reasoning process here </think> answer here<|im_end|>";
 }
 
+void append_vision_image(workflow_context & context, const image_input & image) {
+    auto & vision = context.vision();
+    auto & engine = context.language_model;
+    const auto start = metrics_clock::now();
+    const auto before = engine.tokens().size();
+    engine.append_bagel_image_embeddings(vision.encode(image));
+    if (auto * metrics = context.metrics) {
+        metrics->vision_encode_ms = std::max(0.0, metrics->vision_encode_ms) + metrics_elapsed_ms(start);
+        metrics->vision_tokens += engine.tokens().size() - before;
+    }
+}
+
 class bagel_workflow final : public model_workflow {
 public:
     model_family family() const override { return model_family::bagel; }
@@ -98,7 +111,7 @@ public:
         engine.reset();
         if (think)
             engine.append(engine.tokenize(bagel_reasoning_prompt(false)));
-        context.append_bagel_image(image);
+        append_vision_image(context, image);
         engine.append(engine.tokenize("<|im_start|>" + prompt + "<|im_end|><|im_start|>"));
         begin_text_decode(context);
         auto answer = decode_bagel_answer(context, max_tokens, think);
@@ -123,8 +136,10 @@ public:
         if (options.think)
             engine.append(engine.tokenize(bagel_reasoning_prompt(true)));
         if (input) {
-            context.append_latent_image(*input, options.seed);
-            context.append_bagel_image(*input);
+            context.transfer_prefix(conditioning_slot::conditional);
+            engine.import_prefix(
+                diffusion.append_image_to_prefix(conditioning_slot::conditional, *input, options.seed));
+            append_vision_image(context, *input);
             if (options.guidance > 1) {
                 context.transfer_prefix(conditioning_slot::without_text);
             }

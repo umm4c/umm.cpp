@@ -11,6 +11,7 @@ namespace umm {
 
 class llama_cpp_adapter;
 class diffusion_adapter;
+class bagel_vision_encoder;
 enum class conditioning_slot;
 
 struct workflow_context {
@@ -21,10 +22,7 @@ struct workflow_context {
     request_metrics * metrics = nullptr;
     std::function<diffusion_adapter &()> diffusion;
     std::function<void(conditioning_slot)> transfer_prefix;
-    std::function<void(const image_input &, int64_t)> append_latent_image;
-    std::function<void(const image_input &)> append_u1_image;
-    std::function<void(const image_input &)> append_bagel_image;
-    std::function<std::vector<float>(const image_input &)> encode_u1_prefill_image;
+    std::function<bagel_vision_encoder &()> vision;
 };
 
 class model_workflow {

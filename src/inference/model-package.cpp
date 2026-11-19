@@ -1,4 +1,5 @@
 #include "model-package.h"
+#include "model-registry-internal.h"
 
 #include "json.hpp"
 
@@ -14,8 +15,6 @@ namespace {
 
 constexpr const char * understanding_component = "understanding";
 constexpr const char * generation_component = "generation";
-constexpr const char * vision_component = "vision";
-constexpr const char * vae_component = "vae";
 
 const std::string & empty_component() {
     static const std::string empty;
@@ -106,28 +105,9 @@ const std::string & model_package::component(std::string_view name) const {
 }
 
 bool model_package::supports(model_family resolved_family, model_capability capability) const {
-    if (!model_supports(resolved_family, capability)) {
-        return false;
-    }
-
-    switch (capability) {
-    case model_capability::text:
-        return has_component(understanding_component);
-    case model_capability::image:
-        return has_component(generation_component) &&
-               (resolved_family != model_family::bagel || has_component(vae_component));
-    case model_capability::understand:
-        // U1 keeps its vision encoder in the generation GGUF. BAGEL uses
-        // a separate vision projector component.
-        return resolved_family == model_family::sensenova_u1 ? has_component(generation_component)
-                                                             : has_component(vision_component);
-    case model_capability::edit:
-        return supports(resolved_family, model_capability::image) &&
-               supports(resolved_family, model_capability::understand);
-    case model_capability::image_guidance:
-        return supports(resolved_family, model_capability::edit);
-    }
-    return false;
+    const auto components = model_capability_components(resolved_family, capability);
+    return components.front() && std::all_of(components.begin(), components.end(),
+                                             [&](const char * name) { return name == nullptr || has_component(name); });
 }
 
 model_package resolve_model(const std::string & model, const std::string & generation) {

@@ -140,19 +140,62 @@ void decode_u1_reasoning(llama_cpp_adapter & engine, image_result & result, int 
     engine.append(engine.tokenize("\n\n<img>"));
 }
 
+struct u1_image_grid {
+    int width;
+    int height;
+
+    size_t tokens() const { return size_t(width) * height; }
+    size_t tokens_with_markers() const { return tokens() + 2; }
+};
+
+u1_image_grid image_grid(int width, int height) {
+    return {width / u1_rules::image_stride, height / u1_rules::image_stride};
+}
+
+u1_prefill_segment encode_prefill_image(workflow_context & context, const image_input & image) {
+    const auto grid = image_grid(image.width, image.height);
+    auto & diffusion = context.diffusion();
+    const auto start = metrics_clock::now();
+    profiling::phase_scope phase("vision_encode");
+    auto embeddings = diffusion.encode_u1_image(image);
+    if (auto * metrics = context.metrics) {
+        const auto duration = metrics_elapsed_ms(start);
+        metrics->image_encoder_ms = std::max(0.0, metrics->image_encoder_ms) + duration;
+        metrics->vision_encode_ms = std::max(0.0, metrics->vision_encode_ms) + duration;
+        metrics->vision_tokens += grid.tokens_with_markers();
+    }
+    return {{}, std::move(embeddings), grid.width, grid.height};
+}
+
+void append_edit_image(workflow_context & context, const image_input & image) {
+    const auto grid = image_grid(image.width, image.height);
+    auto & diffusion = context.diffusion();
+    const auto start = metrics_clock::now();
+    profiling::phase_scope phase("vision_encode");
+    const auto embeddings = diffusion.encode_u1_image(image);
+    auto * metrics = context.metrics;
+    if (metrics)
+        metrics->image_encoder_ms = std::max(0.0, metrics->image_encoder_ms) + metrics_elapsed_ms(start);
+    context.language_model.append_u1_image_embeddings(embeddings, grid.width, grid.height, true, metrics);
+    if (metrics) {
+        metrics->vision_encode_ms = std::max(0.0, metrics->vision_encode_ms) + metrics_elapsed_ms(start);
+        metrics->vision_tokens += grid.tokens_with_markers();
+    }
+}
+
 // U1 image-generation prompt fragments.
 void append_u1_edit_prefix(llama_cpp_adapter & engine, workflow_context & context, const image_input & image,
                            const std::string & prompt) {
     engine.append(
         engine.tokenize("<|im_start|>system\n" + u1_generation_system_prompt + "<|im_end|>\n<|im_start|>user\n"));
-    context.append_u1_image(image);
+    append_edit_image(context, image);
     engine.append(engine.tokenize("\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n"));
 }
 
 void append_u1_image_only_prefix(llama_cpp_adapter & engine, workflow_context & context, const image_input & image) {
     engine.append(
         engine.tokenize("<|im_start|>system\n" + u1_generation_system_prompt + "<|im_end|>\n<|im_start|>user\n"));
-    context.append_u1_image(image);
+    append_edit_image(context, image);
     engine.append(engine.tokenize("\n<|im_end|>\n<|im_start|>assistant\n"));
 }
 
@@ -187,8 +230,7 @@ public:
                                  size_t(max_tokens) * (think ? 2 : 1) + 16;
         for (const auto & segment : content) {
             if (const auto * image = std::get_if<image_input>(&segment)) {
-                required_tokens +=
-                    size_t(image->width / u1_rules::image_stride) * (image->height / u1_rules::image_stride) + 2;
+                required_tokens += image_grid(image->width, image->height).tokens_with_markers();
             } else {
                 required_tokens += engine.tokenize(std::get<std::string>(segment)).size();
             }
@@ -228,10 +270,7 @@ public:
                 append_tokens(engine.tokenize(u1_rules::image_start));
                 pending_segments.push_back({std::move(pending_tokens), {}, 0, 0});
                 pending_tokens.clear();
-                pending_segments.push_back({{},
-                                            context.encode_u1_prefill_image(*image),
-                                            image->width / u1_rules::image_stride,
-                                            image->height / u1_rules::image_stride});
+                pending_segments.push_back(encode_prefill_image(context, *image));
                 ++pending_images;
                 append_tokens(engine.tokenize(u1_rules::image_end));
             } else {
@@ -350,9 +389,7 @@ public:
         engine.reset();
         engine.append(engine.tokenize(u1_chat_prompt(prompt, u1_interleave_system_prompt) +
                                       (options.think ? "<think>\n" : "<think>\n\n</think>\n\n")));
-        const auto & descriptor = model_descriptor_for(family());
-        const size_t image_tokens =
-            size_t(options.width / descriptor.image_stride) * size_t(options.height / descriptor.image_stride);
+        const size_t image_tokens = image_grid(options.width, options.height).tokens();
         if (image_tokens > engine.available_u1_generated_image_tokens()) {
             throw std::invalid_argument("Image dimensions exceed the interleaved understanding context");
         }
@@ -396,8 +433,8 @@ public:
             image = diffusion.generate(prompt, image_options, 0.f, std::move(image));
             const image_input generated{image.width, image.height, image.rgb};
             const auto embeddings = diffusion.encode_u1_image(generated);
-            engine.append_u1_generated_image_embeddings(embeddings, image.width / u1_rules::image_stride,
-                                                        image.height / u1_rules::image_stride);
+            const auto grid = image_grid(image.width, image.height);
+            engine.append_u1_generated_image_embeddings(embeddings, grid.width, grid.height);
             result.text += "<image>";
             result.images.push_back(std::move(image));
         }
