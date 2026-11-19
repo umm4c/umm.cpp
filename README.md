@@ -11,10 +11,10 @@ umm.cpp 是 C++ 多模态推理框架，提供命令行、HTTP 和 C++ API，支
 
 ## 构建与模型准备
 
-需要 Git、CMake 3.21+ 和 C++17 编译器。在仓库根目录初始化依赖并构建。
+需要 Git、CMake 3.21+ 和 C++17 编译器。在仓库根目录按当前 UMM 提交锁定的子模块版本初始化依赖，然后构建。
 
 ```bash
-git submodule update --init third_party/llama.cpp third_party/stable-diffusion.cpp
+git submodule update --init --checkout -- third_party/llama.cpp third_party/stable-diffusion.cpp
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j 8
 ```

@@ -7,7 +7,7 @@
 准备支持 Ascend310P3 的宿主机驱动和 `umm-cann:8.5.0-mvp` 镜像。镜像获取和恢复见 [310P 运行镜像](../../docker/README.runtime.md)。先在宿主机初始化子模块，再在容器里编译。编译阶段无需映射 NPU。
 
 ```bash
-git submodule update --init third_party/llama.cpp third_party/stable-diffusion.cpp
+git submodule update --init --checkout -- third_party/llama.cpp third_party/stable-diffusion.cpp
 docker run --rm --security-opt seccomp=unconfined \
   -v "$PWD:/workspace/umm" -w /workspace/umm umm-cann:8.5.0-mvp bash -lc '
     set -e

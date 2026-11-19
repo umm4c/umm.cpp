@@ -4,12 +4,12 @@
 
 ## 准备 worker 源码和镜像
 
-worker 与客户端使用 **同一份 llama.cpp/GGML 源码**，包括 UMM 仓库锁定的子模块及 CANN 补丁。两端都使用 `GGML_MAX_NAME=160`。仅检查 RPC 协议版本不足以确认兼容。
+worker 与客户端使用 **同一份 llama.cpp/GGML 源码**，以 UMM 当前提交锁定的子模块为准，CANN 改动已包含在对应版本中。两端都使用 `GGML_MAX_NAME=160`。仅检查 RPC 协议版本不足以确认兼容。
 
 在客户端仓库根目录执行。下面以 SSH 别名 `hw19` 为例，将远端路径统一替换为实际的专用目录。
 
 ```bash
-git submodule update --init third_party/llama.cpp third_party/stable-diffusion.cpp
+git submodule update --init --checkout -- third_party/llama.cpp third_party/stable-diffusion.cpp
 git -C third_party/llama.cpp rev-parse HEAD
 git -C third_party/llama.cpp status --porcelain
 ssh hw19 'mkdir -p /path/to/umm-rpc-910b/llama.cpp /path/to/umm-rpc-910b/deploy'
