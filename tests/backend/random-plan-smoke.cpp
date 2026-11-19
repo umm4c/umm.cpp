@@ -32,10 +32,10 @@ bool placement_hook(ggml_backend_sched_t sched, ggml_cgraph *, bool allocated, v
         ++state.before;
         if (state.replicas)
             state.replicas->bind(sched, state.plan->placements);
-        umm::assign_random_plan(sched, *state.plan);
+        umm::apply_placements(sched, state.plan->placements);
     } else {
         ++state.after;
-        umm::check_random_plan(sched, *state.plan);
+        umm::verify_placements(sched, state.plan->placements);
     }
     return true;
 }
@@ -111,7 +111,7 @@ std::vector<float> run(ggml_backend_t local, ggml_backend_t remote, ggml_backend
     if (!ggml_backend_sched_alloc_graph(sched.get(), graph))
         throw std::runtime_error("Graph allocation failed");
     if (pure < 0)
-        umm::check_random_plan(sched.get(), plan);
+        umm::verify_placements(sched.get(), plan.placements);
     if (replicas)
         for (int i = 0; i < ggml_backend_sched_get_n_splits(sched.get()); ++i) {
             ggml_backend_sched_split_info info{};

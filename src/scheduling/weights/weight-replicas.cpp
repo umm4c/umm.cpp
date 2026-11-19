@@ -16,10 +16,6 @@ struct device_weights {
     std::unordered_map<ggml_tensor *, ggml_tensor *> copies;
     std::unordered_map<ggml_tensor *, ggml_tensor *> views;
 };
-bool metadata(const ggml_tensor * t) {
-    return t->op == GGML_OP_NONE || t->op == GGML_OP_VIEW || t->op == GGML_OP_RESHAPE || t->op == GGML_OP_TRANSPOSE ||
-           t->op == GGML_OP_PERMUTE;
-}
 }
 struct weight_replicas::impl {
     std::vector<device_weights> devices;
@@ -133,7 +129,7 @@ size_t weight_replicas::bind(ggml_backend_sched_t sched, const std::vector<node_
     size_t bindings = 0;
     for (const auto & placement : placements) {
         auto node = placement.node;
-        if (metadata(node))
+        if (is_metadata_node(node))
             continue;
         device_weights * target = nullptr;
         for (auto & device : impl_->devices)

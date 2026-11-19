@@ -2,7 +2,6 @@
 #include "policies/random-plan.h"
 #include "ggml-backend.h"
 
-#include <cstdlib>
 #include <stdexcept>
 
 namespace umm {
@@ -12,11 +11,6 @@ namespace policy_options {
 std::string get(const execution_options & options, const std::string & key, const std::string & fallback) {
     const auto it = options.find(key);
     return it == options.end() ? fallback : it->second;
-}
-
-void environment(const char * name, const std::string & value) {
-    if (setenv(name, value.c_str(), 1))
-        throw std::runtime_error(std::string("Cannot set ") + name);
 }
 
 void require(execution_options & options, const std::string & key, const std::string & value) {
@@ -46,7 +40,7 @@ std::string rpc_endpoint(const execution_options & options, const char * policy)
     return endpoint;
 }
 
-void configure_devices(execution_options & options, const std::string & selected) {
+void resolve_device_options(execution_options & options, const std::string & selected) {
     for (const char * key : {"--understanding-backend", "--generation-backend", "--vision-backend"}) {
         require(options, key, selected);
     }
@@ -58,20 +52,11 @@ void configure_devices(execution_options & options, const std::string & selected
     options.emplace("--n-ctx", "2048");
     options.emplace("--n-batch", "512");
     options.emplace("--n-ubatch", "256");
-    environment("GGML_CANN_Q8_NZ", get(options, "--cann-q8-nz"));
-    environment("GGML_SCHED_STRICT_ACCEL", "1");
-}
-
-void require_execution_device(const std::string & selected) {
-    if (const char * previous = std::getenv("GGML_REQUIRED_DEVICE")) {
-        if (selected != previous)
-            throw std::invalid_argument("A process cannot change its static execution device");
-    }
 }
 
 }
 
-understanding_schedule configure_execution_policy(execution_options & options) {
+execution_configuration configure_execution_policy(execution_options & options) {
     static const local_310p_policy local;
     static const remote_910b_policy remote;
     static const random_policy random;

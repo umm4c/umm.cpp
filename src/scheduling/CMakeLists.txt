@@ -1,6 +1,8 @@
 add_library(umm-scheduling STATIC
     execution-policy.cpp
     backend-devices.cpp
+    backend-environment.cpp
+    placement.cpp
     policies/local-310p.cpp
     policies/remote-910b.cpp
     policies/random.cpp

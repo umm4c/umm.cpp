@@ -138,7 +138,7 @@ int run(int argc, char ** argv) {
         return 0;
     }
 
-    const auto schedule = umm::configure_execution_policy(args);
+    const auto execution = umm::configure_execution_policy(args);
     const auto & model = required(args, "--model");
     const auto & prompt = required(args, "--prompt");
     if (!std::filesystem::is_directory(model)) {
@@ -153,18 +153,12 @@ int run(int argc, char ** argv) {
     if (std::find(modes.begin(), modes.end(), mode) == modes.end())
         throw std::invalid_argument("Unsupported mode: " + mode);
 
-    if (args.count("--cann-q8-nz")) {
-        const auto & enabled = args.at("--cann-q8-nz");
-        if (enabled != "0" && enabled != "1")
-            throw std::invalid_argument("cann-q8-nz must be 0 or 1");
-        if (setenv("GGML_CANN_Q8_NZ", enabled.c_str(), 1))
-            throw std::runtime_error("Could not configure CANN Q8 layout");
-    }
+    umm::apply_execution_environment(args, execution);
 
     umm::session session(model, "", value(args, "--understanding-backend"), value(args, "--generation-backend"),
                          value(args, "--generation-max-vram"), value(args, "--vision-backend"),
                          std::stoi(value(args, "--n-ctx", "0")), std::stoi(value(args, "--n-batch", "0")),
-                         std::stoi(value(args, "--n-ubatch", "0")), schedule);
+                         std::stoi(value(args, "--n-ubatch", "0")), execution.schedule);
     if (mode == "text") {
         std::cout << session.text(prompt, std::stoi(value(args, "--max-tokens", "256"))) << '\n';
         return 0;

@@ -14,6 +14,15 @@ struct understanding_schedule {
     graph_placement place;
 };
 
-understanding_schedule configure_execution_policy(execution_options & options);
+struct execution_configuration {
+    understanding_schedule schedule;
+    bool strict_acceleration = false;
+    std::string required_device;
+    std::string rpc_cann_device;
+};
+
+execution_configuration configure_execution_policy(execution_options & options);
+// Apply the resolved layout and accelerator guards before loading the model.
+void apply_execution_environment(const execution_options & options, const execution_configuration & configuration);
 
 }

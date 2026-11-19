@@ -1,11 +1,12 @@
 #include "policy.h"
 #include "scheduling/backend-devices.h"
+#include "scheduling/backend-environment.h"
 
 #include <stdexcept>
 
 namespace umm {
 
-understanding_schedule remote_910b_policy::apply(execution_options & options) const {
+execution_configuration remote_910b_policy::apply(execution_options & options) const {
     using namespace policy_options;
     const auto endpoint = rpc_endpoint(options, "remote_910b");
     if (options.count("--local-device")) {
@@ -13,13 +14,11 @@ understanding_schedule remote_910b_policy::apply(execution_options & options) co
     }
     require(options, "--cann-q8-nz", "0");
     require(options, "--monitoring", "0");
-    environment("GGML_RPC_NO_RDMA", "1");
+    set_backend_environment("GGML_RPC_NO_RDMA", "1");
     const auto selected = register_remote_cann(endpoint);
-    environment("GGML_RPC_CANN_DEVICE", selected);
     require_execution_device(selected);
-    configure_devices(options, selected);
-    environment("GGML_REQUIRED_DEVICE", selected);
-    return {};
+    resolve_device_options(options, selected);
+    return {{}, true, selected, selected};
 }
 
 }

@@ -1,5 +1,6 @@
 #include "random-plan.h"
 #include "scheduling/backend-devices.h"
+#include "scheduling/backend-environment.h"
 
 #include <charconv>
 #include <cstdlib>
@@ -11,10 +12,6 @@
 
 namespace umm {
 namespace {
-bool metadata(const ggml_tensor * t) {
-    return t->op == GGML_OP_NONE || t->op == GGML_OP_VIEW || t->op == GGML_OP_RESHAPE || t->op == GGML_OP_TRANSPOSE ||
-           t->op == GGML_OP_PERMUTE;
-}
 ggml_backend_t owner(ggml_tensor * t, const std::unordered_map<ggml_tensor *, ggml_backend_t> & assigned,
                      ggml_backend_t a, ggml_backend_t b) {
     while (t->view_src)
@@ -40,7 +37,7 @@ bool candidate(ggml_cgraph * graph, ggml_backend_t a, ggml_backend_t b, const st
         auto node = ggml_graph_node(graph, i);
         const size_t partition = std::upper_bound(cuts.begin(), cuts.end(), i) - cuts.begin();
         auto backend = partition % 2 == 0 ? a : b;
-        if (metadata(node)) {
+        if (is_metadata_node(node)) {
             if (node->buffer && !node->view_src) {
                 backend = owner(node, assigned, a, b);
                 if (!backend)
@@ -81,7 +78,7 @@ template <typename T> T parse_number(const execution_options & options, const ch
 }
 }
 
-understanding_schedule random_policy::apply(execution_options & options) const {
+execution_configuration random_policy::apply(execution_options & options) const {
     using namespace policy_options;
     const auto seed = parse_number<uint32_t>(options, "--policy-seed", "0");
     const auto cuts = parse_number<int>(options, "--policy-cuts", "1");
@@ -96,34 +93,30 @@ understanding_schedule random_policy::apply(execution_options & options) const {
     }
     const auto local = local_device(options);
     require(options, "--cann-q8-nz", "0");
-    configure_devices(options, local);
-    environment("GGML_RPC_NO_RDMA", "1");
+    resolve_device_options(options, local);
+    set_backend_environment("GGML_RPC_NO_RDMA", "1");
     const auto remote = register_remote_cann(endpoint);
     const auto primary = ggml_backend_dev_by_name(local.c_str());
     const auto secondary = ggml_backend_dev_by_name(remote.c_str());
 
-    return {remote, [primary, secondary, seed, cuts, placement = random_plan{}](
-                        ggml_backend_sched_t sched, ggml_cgraph * graph, bool allocated) mutable {
-                if (allocated) {
-                    check_random_plan(sched, placement);
-                    return;
-                }
-                ggml_backend_t local_backend = nullptr;
-                ggml_backend_t remote_backend = nullptr;
-                for (int i = 0; i < ggml_backend_sched_get_n_backends(sched); ++i) {
-                    const auto backend = ggml_backend_sched_get_backend(sched, i);
-                    const auto device = ggml_backend_get_device(backend);
-                    if (device == primary)
-                        local_backend = backend;
-                    if (device == secondary)
-                        remote_backend = backend;
-                }
-                if (!local_backend || !remote_backend) {
-                    throw std::runtime_error("Random placement requires both configured devices in the scheduler");
-                }
-                placement = plan(graph, local_backend, remote_backend, seed, false, cuts);
-                assign_random_plan(sched, placement);
-            }};
+    execution_configuration configuration;
+    configuration.strict_acceleration = true;
+    configuration.schedule = {
+        remote, [primary, secondary, seed, cuts,
+                 placement = random_plan{}](ggml_backend_sched_t sched, ggml_cgraph * graph, bool allocated) mutable {
+            if (allocated) {
+                verify_placements(sched, placement.placements);
+                return;
+            }
+            const auto local_backend = find_scheduler_backend(sched, primary);
+            const auto remote_backend = find_scheduler_backend(sched, secondary);
+            if (!local_backend || !remote_backend) {
+                throw std::runtime_error("Random placement requires both configured devices in the scheduler");
+            }
+            placement = plan(graph, local_backend, remote_backend, seed, false, cuts);
+            apply_placements(sched, placement.placements);
+        }};
+    return configuration;
 }
 
 random_plan random_policy::plan(ggml_cgraph * graph, ggml_backend_t first, ggml_backend_t second, uint32_t seed,
@@ -134,7 +127,7 @@ random_plan random_policy::plan(ggml_cgraph * graph, ggml_backend_t first, ggml_
     std::vector<int> cuts;
     bool seen_compute = false;
     for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
-        if (!metadata(ggml_graph_node(graph, i))) {
+        if (!is_metadata_node(ggml_graph_node(graph, i))) {
             if (seen_compute)
                 cuts.push_back(i);
             seen_compute = true;
@@ -171,18 +164,5 @@ random_plan random_policy::plan(ggml_cgraph * graph, ggml_backend_t first, ggml_
         }
     }
     throw std::runtime_error("No valid random partition found in the candidate search budget");
-}
-void assign_random_plan(ggml_backend_sched_t sched, const random_plan & plan) {
-    if (!sched || plan.cut_nodes.empty() || plan.placements.empty())
-        throw std::invalid_argument("Invalid random plan");
-    for (const auto & p : plan.placements)
-        ggml_backend_sched_set_tensor_backend(sched, p.node, p.backend);
-}
-void check_random_plan(ggml_backend_sched_t sched, const random_plan & plan) {
-    for (const auto & p : plan.placements) {
-        if (!metadata(p.node) && ggml_backend_sched_get_tensor_backend(sched, p.node) != p.backend) {
-            throw std::runtime_error("Scheduler placement differs from the random plan");
-        }
-    }
 }
 }

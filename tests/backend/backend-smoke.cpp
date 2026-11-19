@@ -23,7 +23,8 @@ int main(int argc, char ** argv) {
         } else {
             if (argc >= 3)
                 options[std::string(argv[1]) == "local_310p" ? "--local-device" : "--rpc-endpoint"] = argv[2];
-            umm::configure_execution_policy(options);
+            const auto execution = umm::configure_execution_policy(options);
+            umm::apply_execution_environment(options, execution);
         }
         if (argc == 4 && std::string(argv[3]) != "saturation")
             throw std::invalid_argument("Unknown backend smoke mode");

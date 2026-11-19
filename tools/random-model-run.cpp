@@ -1,4 +1,5 @@
 #include "scheduling/backend-devices.h"
+#include "scheduling/backend-environment.h"
 #include "adapters/llama-cpp-adapter.h"
 #include "scheduling/policies/random-plan.h"
 #include "scheduling/weights/weight-replicas.h"
@@ -61,12 +62,12 @@ bool place(ggml_backend_sched_t sched, ggml_cgraph * graph, bool allocated, void
                                                       state.cuts);
                 state.planning_ms = ms(start);
                 state.weight_bindings = state.replicas ? state.replicas->bind(sched, state.plan.placements) : 0;
-                umm::assign_random_plan(sched, state.plan);
+                umm::apply_placements(sched, state.plan.placements);
             }
             return true;
         }
         if (state.mode == "random")
-            umm::check_random_plan(sched, state.plan);
+            umm::verify_placements(sched, state.plan.placements);
         json nodes = json::array(), splits = json::array(), boundaries = json::array();
         for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
             auto t = ggml_graph_node(graph, i);
@@ -196,7 +197,7 @@ int main(int argc, char ** argv) {
         owns_output = true;
         summary = {{"status", "running"}, {"mode", mode}, {"config", config}, {"requests", json::array()}};
         write(out / "summary.json", summary);
-        setenv("GGML_CANN_Q8_NZ", "0", 1);
+        umm::set_cann_q8_nz("0");
         setenv("GGML_SCHED_STRICT_ACCEL", "1", 1);
         setenv("GGML_RPC_NO_RDMA", "1", 1);
         ggml_backend_load_all();

@@ -246,19 +246,13 @@ struct service::impl {
 };
 
 service::service(options args) {
-    auto schedule = umm::configure_execution_policy(args);
-    if (args.count("--cann-q8-nz")) {
-        const auto & enabled = args.at("--cann-q8-nz");
-        if (enabled != "0" && enabled != "1")
-            throw std::invalid_argument("cann-q8-nz must be 0 or 1");
-        if (setenv("GGML_CANN_Q8_NZ", enabled.c_str(), 1))
-            throw std::runtime_error("Could not configure CANN Q8 layout");
-    }
+    auto execution = umm::configure_execution_policy(args);
+    umm::apply_execution_environment(args, execution);
     const auto enabled = option(args, "--monitoring", "1");
     if (enabled != "0" && enabled != "1")
         throw std::invalid_argument("monitoring must be 0 or 1");
     setenv("GGML_CANN_TRANSFER_METRICS", enabled.c_str(), 1);
-    state.reset(new impl(std::move(args), std::move(schedule)));
+    state.reset(new impl(std::move(args), std::move(execution.schedule)));
 }
 service::~service() = default;
 const json & service::info() const {
