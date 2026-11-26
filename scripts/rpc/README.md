@@ -78,7 +78,7 @@ OUTPUT_DIR="$PWD/outputs/u15-remote" \
   scripts/run-static.sh remote_910b image '白色背景上的红色立方体'
 ```
 
-脚本各次启动独立进程，默认 context / batch / ubatch 为 `8192 / 4096 / 4096`，可用 `N_CTX`、`N_BATCH`、`N_UBATCH` 覆盖。直接调用 CLI、JSONL 或 HTTP 并选择 `remote_910b` 时，策略默认值是 `2048 / 512 / 256`。脚本默认生图配置为 1024 × 1024、8 步、CFG 1、shift 3、seed 7。
+脚本各次启动独立进程，默认 context / batch / ubatch 为 `8192 / 4096 / 4096`，可用 `N_CTX`、`N_BATCH`、`N_UBATCH` 覆盖。直接调用 CLI、JSONL 或 HTTP 并选择 `remote_910b` 时，U1.5 默认使用 `2048 / 1024 / 1024`，BAGEL 默认使用 `2048 / 512 / 256`。脚本默认生图配置为 1024 × 1024、8 步、CFG 1、shift 3、seed 7。
 
 检查文本、图像理解答案和 PNG 是否符合预期。对照 worker 日志和远端 `npu-smi info` 确认实际用卡。记录两端版本、数值配置、首轮权重加载开销、后续请求耗时和输出。
 

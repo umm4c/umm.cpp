@@ -33,7 +33,8 @@ OUTPUT_DIR="$PWD/outputs/u15-local" \
 
 | 入口 | context / batch / ubatch 默认值 | 覆盖参数 |
 | --- | --- | --- |
-| CLI、JSONL 和 HTTP 的 `local_310p` 策略 | `2048 / 512 / 256` | `--n-ctx`、`--n-batch`、`--n-ubatch` |
+| CLI、JSONL 和 HTTP 的 `local_310p` 策略（U1.5） | `2048 / 1024 / 1024` | `--n-ctx`、`--n-batch`、`--n-ubatch` |
+| CLI、JSONL 和 HTTP 的 `local_310p` 策略（BAGEL） | `2048 / 512 / 256` | `--n-ctx`、`--n-batch`、`--n-ubatch` |
 | `scripts/run-static.sh local_310p` | `8192 / 4096 / 4096` | `N_CTX`、`N_BATCH`、`N_UBATCH` |
 | `scripts/ascend/run-u15.sh` | `2048 / 512 / 256` | `N_CTX`、`N_BATCH`、`N_UBATCH` |
 

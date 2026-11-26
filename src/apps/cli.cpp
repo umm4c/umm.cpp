@@ -1,5 +1,5 @@
 #include "cli.h"
-#include "scheduling/execution-policy.h"
+#include "inference/session-config.h"
 
 #include "runtime/image-io.h"
 #include "json.hpp"
@@ -138,7 +138,7 @@ int run(int argc, char ** argv) {
         return 0;
     }
 
-    const auto execution = umm::configure_execution_policy(args);
+    const auto execution = umm::configure_model_execution_policy(args);
     const auto & model = required(args, "--model");
     const auto & prompt = required(args, "--prompt");
     if (!std::filesystem::is_directory(model)) {

@@ -32,7 +32,7 @@ cmake --build build-profiler --target umm-profiler -j 8
 | 负载 | context / batch / ubatch 默认值 |
 | --- | --- |
 | 只有文生图 | `2048 / 512 / 256` |
-| 有案例使用超过四张输入图像 | `32768 / 1152 / 1152` |
+| 有案例使用超过四张输入图像 | context 为 `32768`，batch 和 ubatch 取 `1152` 与预处理后最大单图视觉 token 数中的较大值 |
 | 其他 | `8192 / 4096 / 4096` |
 
 实际参数以结果的 manifest 为准。

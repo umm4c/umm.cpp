@@ -17,10 +17,6 @@ namespace {
 
 using namespace workflow_detail;
 
-int round_to_factor(int value, int factor) {
-    return std::max(factor, ((value + factor / 2) / factor) * factor);
-}
-
 image_input resize_rgb_image(const image_input & image, int width, int height) {
     if (image.width == width && image.height == height) {
         return image;
@@ -57,26 +53,7 @@ image_input resize_rgb_image(const image_input & image, int width, int height) {
 
 image_input prepare_u1_input(const image_input & image) {
     validate_rgb_image(image);
-    constexpr int factor = u1_rules::image_stride;
-    constexpr int64_t min_pixels = 256LL * 256LL;
-    constexpr int64_t max_pixels = 2048LL * 2048LL;
-    if (std::max(image.width, image.height) / static_cast<double>(std::min(image.width, image.height)) > 200.0) {
-        throw std::invalid_argument("U1 image aspect ratio must be below 200");
-    }
-
-    int height = round_to_factor(image.height, factor);
-    int width = round_to_factor(image.width, factor);
-    const int64_t rounded_area = int64_t(height) * width;
-    const int64_t original_area = int64_t(image.height) * image.width;
-    if (rounded_area > max_pixels) {
-        const double scale = std::sqrt(static_cast<double>(original_area) / max_pixels);
-        height = std::max(factor, static_cast<int>(std::floor(image.height / scale / factor)) * factor);
-        width = std::max(factor, static_cast<int>(std::floor(image.width / scale / factor)) * factor);
-    } else if (rounded_area < min_pixels) {
-        const double scale = std::sqrt(static_cast<double>(min_pixels) / original_area);
-        height = std::max(factor, static_cast<int>(std::ceil(image.height * scale / factor)) * factor);
-        width = std::max(factor, static_cast<int>(std::ceil(image.width * scale / factor)) * factor);
-    }
+    const auto [width, height] = u1_rules::prepared_image_size(image.width, image.height);
     return resize_rgb_image(image, width, height);
 }
 

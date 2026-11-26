@@ -14,6 +14,17 @@ namespace umm::runtime {
 
 static const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+std::pair<int, int> image_dimensions(std::string_view bytes, size_t max_pixels) {
+    const auto * data = reinterpret_cast<const unsigned char *>(bytes.data());
+    int width = 0, height = 0, channels = 0;
+    if (bytes.empty() || bytes.size() > size_t(std::numeric_limits<int>::max()) ||
+        !stbi_info_from_memory(data, int(bytes.size()), &width, &height, &channels) || width <= 0 || height <= 0 ||
+        size_t(width) > max_pixels / size_t(height)) {
+        throw std::invalid_argument("Invalid image or decoded pixel limit exceeded");
+    }
+    return {width, height};
+}
+
 umm::image_input read_image_data_url(const std::string & value, size_t max_pixels) {
     const auto comma = value.find(',');
     if (comma == std::string::npos ||
@@ -51,12 +62,8 @@ umm::image_input read_image_data_url(const std::string & value, size_t max_pixel
         if (!padding)
             bytes.push_back(word);
     }
-    int width = 0, height = 0, channels = 0;
-    if (bytes.size() > size_t(std::numeric_limits<int>::max()) ||
-        !stbi_info_from_memory(bytes.data(), int(bytes.size()), &width, &height, &channels) || width <= 0 ||
-        height <= 0 || size_t(width) > max_pixels / size_t(height)) {
-        throw std::invalid_argument("Invalid image or decoded pixel limit exceeded");
-    }
+    auto [width, height] = image_dimensions({reinterpret_cast<const char *>(bytes.data()), bytes.size()}, max_pixels);
+    int channels = 0;
     unsigned char * pixels = stbi_load_from_memory(bytes.data(), int(bytes.size()), &width, &height, &channels, 3);
     if (!pixels)
         throw std::invalid_argument("Could not decode image data");
