@@ -11,13 +11,28 @@ namespace umm {
 inline execution_configuration configure_model_execution_policy(execution_options & options) {
     const auto policy = options.find("--execution-policy");
     const auto model = options.find("--model");
-    if (policy != options.end() && model != options.end() &&
-        (policy->second == "local_310p" || policy->second == "remote_910b") &&
-        (!options.count("--n-batch") || !options.count("--n-ubatch")) &&
-        resolve_model(model->second).family == model_family::sensenova_u1) {
-        // A 1024 x 1024 U1 input needs one complete 1024-token image group.
-        options.emplace("--n-batch", "1024");
-        options.emplace("--n-ubatch", "1024");
+    if (policy != options.end() && model != options.end()) {
+        const bool local = policy->second == "local_310p";
+        const bool needs_batch_defaults = !options.count("--n-batch") || !options.count("--n-ubatch");
+        if ((local || policy->second == "remote_910b") &&
+            (needs_batch_defaults || (local && !options.count("--n-ctx")))) {
+            const auto family = resolve_model(model->second).family;
+            int image_group_tokens = 0;
+            if (family == model_family::sensenova_u1) {
+                // A 1024 x 1024 U1 input needs one complete 1024-token image group.
+                image_group_tokens = 1024;
+            } else if (local && family == model_family::bagel) {
+                // BAGEL fits the patches of a 980 x 980 vision grid and both boundaries in one batch.
+                image_group_tokens = (980 / 14) * (980 / 14) + 2;
+            }
+            if (image_group_tokens > 0) {
+                constexpr int text_context_tokens = 1024;
+                const auto batch_size = std::to_string(image_group_tokens);
+                options.emplace("--n-ctx", std::to_string(image_group_tokens + text_context_tokens));
+                options.emplace("--n-batch", batch_size);
+                options.emplace("--n-ubatch", batch_size);
+            }
+        }
     }
     return configure_execution_policy(options);
 }
