@@ -137,7 +137,7 @@ void decode_u1_reasoning(llama_cpp_adapter & engine, image_result & result, int 
             engine.append({token});
         }
     }
-    engine.append(engine.tokenize("\n\n<img>"));
+    engine.append(engine.tokenize("</think>\n\n<img>"));
 }
 
 struct u1_image_grid {
@@ -293,7 +293,7 @@ public:
                     engine.append({token});
                 }
             }
-            engine.append(engine.tokenize("\n\n"));
+            engine.append(engine.tokenize("</think>\n\n"));
         } else {
             append_tokens(engine.tokenize("<think>\n\n</think>\n\n"), true);
             begin_text_decode(context);
