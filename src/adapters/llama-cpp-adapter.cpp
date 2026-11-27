@@ -130,6 +130,10 @@ bool llama_cpp_adapter::is_end(llama_token token) const {
 
 void llama_cpp_adapter::reset() {
     llama_memory_clear(llama_get_memory(context_.get()), true);
+    if (family_ == model_family::bagel) {
+        llama_set_causal_attn(context_.get(), true);
+    }
+    placement_error_ = {};
     tokens_.clear();
     positions_.clear();
     next_position_ = 0;
@@ -149,6 +153,10 @@ ggml_backend_sched_t llama_cpp_adapter::scheduler() const {
 
 void llama_cpp_adapter::set_placement(graph_placement placement) {
     placement_ = std::move(placement);
+    apply_placement_callback();
+}
+
+void llama_cpp_adapter::apply_placement_callback() {
     if (!placement_) {
         ggml_backend_sched_set_placement_callback(scheduler(), nullptr, nullptr);
         return;
@@ -172,6 +180,12 @@ int llama_cpp_adapter::decode_profiled(llama_batch batch, const char * phase) {
     profiling::phase_scope scope(
         std::string(profiling::current_phase.phase) == "understanding_decode" ? "understanding_decode" : phase,
         batch.n_tokens, tokens_.size());
+    placement_error_ = {};
+    if (family_ == model_family::bagel && placement_) {
+        // Changing BAGEL's attention mode can recreate the scheduler and drop its placement callback.
+        context_->sched_reserve();
+        apply_placement_callback();
+    }
     const int status = llama_decode(context_.get(), batch);
     if (placement_error_) {
         std::rethrow_exception(std::exchange(placement_error_, {}));

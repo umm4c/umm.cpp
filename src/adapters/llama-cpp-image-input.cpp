@@ -58,11 +58,17 @@ void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> &
     batch.n_seq_id = seq_counts.data();
     batch.seq_id = seq_ids.data();
     batch.logits = outputs.data();
-    llama_set_causal_attn(context_.get(), false);
-    const int status = decode_profiled(batch, "understanding_prefill");
-    llama_set_causal_attn(context_.get(), true);
-    if (status)
+    struct noncausal_attention_scope {
+        llama_context * context;
+        explicit noncausal_attention_scope(llama_context * ctx) : context(ctx) {
+            llama_set_causal_attn(context, false);
+        }
+        ~noncausal_attention_scope() { llama_set_causal_attn(context, true); }
+    };
+    has_logits_ = false;
+    if (const noncausal_attention_scope attention(context_.get()); decode_profiled(batch, "understanding_prefill")) {
         throw std::runtime_error("Image understanding decode failed");
+    }
     const auto offset = tokens_.size();
     tokens_.resize(offset + n, LLAMA_TOKEN_NULL);
     tokens_[offset] = boundary.front();

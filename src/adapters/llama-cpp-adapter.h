@@ -66,6 +66,7 @@ public:
     size_t context_capacity() const { return llama_n_ctx(context_.get()); }
 
 private:
+    void apply_placement_callback();
     int decode_profiled(llama_batch batch, const char * phase);
     std::vector<float> token_embeddings(const std::vector<llama_token> & tokens);
     std::string architecture_;
