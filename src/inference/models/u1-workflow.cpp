@@ -394,31 +394,27 @@ public:
             throw std::invalid_argument("Image dimensions exceed the interleaved understanding context");
         }
 
+        const auto image_start = engine.tokenize(u1_rules::image_start);
+        if (image_start.size() != 1) {
+            throw std::runtime_error("Missing SenseNova U1 image start token");
+        }
         interleave_result result;
         int text_tokens = 0;
-        while (text_tokens < max_text_tokens) {
-            const auto token = engine.greedy();
+        while (text_tokens < max_text_tokens && engine.tokens().size() < engine.context_capacity()) {
+            const bool can_generate_image = result.images.size() < static_cast<size_t>(max_images) &&
+                                            image_tokens <= engine.available_u1_generated_image_tokens();
+            const auto token = engine.greedy(can_generate_image ? LLAMA_TOKEN_NULL : image_start.front());
             if (engine.is_end(token)) {
                 break;
             }
-            const auto piece = engine.piece(token);
-            if (piece != u1_rules::image_start) {
-                result.text += piece;
+            if (token != image_start.front()) {
+                result.text += engine.piece(token);
                 {
                     profiling::phase_scope phase("understanding_decode");
                     engine.append({token});
                 }
                 ++text_tokens;
                 continue;
-            }
-            if (static_cast<int>(result.images.size()) >= max_images) {
-                break;
-            }
-            if (image_tokens > engine.available_u1_generated_image_tokens()) {
-                if (result.images.empty()) {
-                    throw std::runtime_error("No understanding context remains for a generated image");
-                }
-                break;
             }
             {
                 profiling::phase_scope phase("understanding_decode");

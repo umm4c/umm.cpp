@@ -53,7 +53,7 @@ public:
     void append_u1_generated_image_embeddings(const std::vector<float> & embeddings, int grid_width, int grid_height);
     // Capacity for image embeddings before appending their start/end tokens.
     size_t available_u1_generated_image_tokens() const;
-    llama_token greedy() const;
+    llama_token greedy(llama_token excluded = LLAMA_TOKEN_NULL) const;
     const float * logits() const;
     int vocab_size() const;
     ggml_tensor * tensor(const char * name) const;

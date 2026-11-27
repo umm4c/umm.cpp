@@ -250,9 +250,20 @@ ggml_tensor * llama_cpp_adapter::tensor(const char * name) const {
     return const_cast<ggml_tensor *>(tensor);
 }
 
-llama_token llama_cpp_adapter::greedy() const {
+llama_token llama_cpp_adapter::greedy(llama_token excluded) const {
     const float * scores = logits();
-    return std::max_element(scores, scores + vocab_size()) - scores;
+    const int count = vocab_size();
+    const llama_token top = std::max_element(scores, scores + count) - scores;
+    if (top != excluded) {
+        return top;
+    }
+    llama_token best = excluded == 0 ? 1 : 0;
+    for (llama_token token = best + 1; token < count; ++token) {
+        if (token != excluded && scores[token] > scores[best]) {
+            best = token;
+        }
+    }
+    return best;
 }
 
 }
