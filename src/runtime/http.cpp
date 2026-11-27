@@ -1,6 +1,8 @@
 #include "service.h"
 #include "httplib.h"
+#include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <thread>
 
 namespace umm::runtime {
@@ -91,7 +93,7 @@ int positive(const json & value, int limit) {
         throw std::invalid_argument("Integer exceeds supported range");
     return int(number);
 }
-json chat_request(const json & input, const std::string & id) {
+json chat_request(const json & input, const std::string & id, model_family family) {
     only(input, {"model", "messages", "max_tokens", "max_completion_tokens", "temperature", "stream", "n"});
     if (input.contains("stream") && input.at("stream") != false)
         throw std::invalid_argument("Streaming is not supported");
@@ -130,6 +132,13 @@ json chat_request(const json & input, const std::string & id) {
         }
     } else
         throw std::invalid_argument("Invalid message content");
+    if (family == model_family::bagel && images == 1) {
+        // BAGEL's single-image workflow places the image before the prompt.
+        const auto image = std::find_if(parts.begin(), parts.end(), [](const json & part) {
+            return part.at("type") == "image";
+        });
+        std::rotate(parts.begin(), image, std::next(image));
+    }
     const std::string task = images == 0                                  ? "text_generation"
                              : images == 1 && parts[0]["type"] == "image" ? "mixed_understanding"
                                                                           : "multimodal_prefill";
@@ -193,6 +202,7 @@ int serve_http(service & runtime, const options & args) {
     httplib::Server server;
     configure(server, runtime, token(args));
     const auto model = option(args, "--served-model-name", "u15");
+    const auto family = model_family_for(runtime.info().at("runtime_identity").at("architecture").get<std::string>());
     server.Get("/v1/models", [model](const httplib::Request &, httplib::Response & response) {
         response.set_content(
             json({{"object", "list"},
@@ -220,7 +230,7 @@ int serve_http(service & runtime, const options & args) {
                     error(response, 404, "model_not_found", "Unknown model alias");
                     return;
                 }
-                normalized = image ? image_request(input, id) : chat_request(input, id);
+                normalized = image ? image_request(input, id) : chat_request(input, id, family);
                 if (request.has_header("X-Client-Case-ID"))
                     normalized["client_case_id"] = request.get_header_value("X-Client-Case-ID").substr(0, 128);
             } catch (const std::exception & exc) {
