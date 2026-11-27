@@ -221,7 +221,10 @@ struct service::impl {
                             : json("umm-" + std::to_string(getpid()) + "-" + std::to_string(++sequence));
                     if (current.request.contains("client_case_id"))
                         value["client_case_id"] = current.request["client_case_id"];
-                    const auto task = current.request.value("task_class", "unknown");
+                    const auto task_field = current.request.find("task_class");
+                    const auto task = task_field != current.request.end() && task_field->is_string()
+                                          ? task_field->get<std::string>()
+                                          : "unknown";
                     const auto known = task == "text_generation" || task == "mixed_understanding" ||
                                        task == "multimodal_prefill" || task == "image_generation";
                     record(value, known ? task : "unknown", current.source);
