@@ -121,14 +121,8 @@ json run_protocol_case(session & engine, const json & input, const options & arg
     inference_result result;
     std::string case_id;
     try {
-        if (!input.is_object())
-            throw std::invalid_argument("Request must be a JSON object");
         case_id = required<std::string>(input, "case_id");
-        const auto task = input.find("task_class");
-        if (task == input.end())
-            throw std::invalid_argument("Missing field: task_class");
-        if (!task->is_string())
-            throw std::invalid_argument("task_class must be a string");
+        const auto task = required<std::string>(input, "task_class");
         const auto & content = input.at("content");
         const auto & params = input.at("params");
         if (!content.is_array() || !params.is_object())
@@ -147,7 +141,7 @@ json run_protocol_case(session & engine, const json & input, const options & arg
                 throw std::invalid_argument("Unknown content type: " + type);
             }
         }
-        validate_request(request, task->get_ref<const std::string &>());
+        validate_request(request, task);
         if (request.task == inference_task::generate_image) {
             request.generation = generation_options(params, args);
             format.configure_generation(input, params, request.generation);
