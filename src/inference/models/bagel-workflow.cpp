@@ -44,17 +44,18 @@ std::string decode_bagel_answer(workflow_context & context, int max_tokens, bool
         context.metrics->finish_reason = "length";
     for (int i = 0; i < max_tokens; ++i) {
         const auto token = engine.greedy();
+        const bool end = engine.is_end(token);
+        note_text_token(context, end);
+        if (end) {
+            break;
+        }
         const auto piece = engine.piece(token);
-        note_text_token(context, engine.is_end(token));
         if (piece == "<think>") {
             in_reasoning = true;
         } else if (piece == "</think>") {
             in_reasoning = false;
         } else if (!think || !in_reasoning) {
             result += piece;
-        }
-        if (engine.is_end(token)) {
-            break;
         }
         {
             profiling::phase_scope phase("understanding_decode");
