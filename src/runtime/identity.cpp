@@ -115,8 +115,9 @@ json runtime_identity(const std::string & model, const std::map<std::string, std
     const bool q8_nz = q8_layout == "on" || q8_layout == "1" || q8_layout == "yes" || q8_layout == "y" ||
                        q8_layout == "enable" || q8_layout == "true";
     const auto policy = option(options, "--execution-policy");
+    const auto endpoint = option(options, "--rpc-endpoint");
     const bool mixed = !secondary_backend.empty();
-    const bool rpc = policy == "remote_910b";
+    const bool rpc = policy == "remote_910b" || !endpoint.empty();
     const bool explicit_devices =
         !option(options, "--understanding-backend").empty() || !option(options, "--generation-backend").empty();
     const char * policy_mode =
@@ -137,7 +138,7 @@ json runtime_identity(const std::string & model, const std::map<std::string, std
               {"vision", backend_devices(option(options, "--vision-backend"))}}},
             {"transport",
              {{"kind", mixed ? "mixed" : (rpc ? "rpc" : "local")},
-              {"endpoint", option(options, "--rpc-endpoint")},
+              {"endpoint", endpoint},
               {"remote_metrics", (mixed || rpc) ? "collected_on_worker" : "not_applicable"}}},
             {"policy",
              {{"name", policy},
