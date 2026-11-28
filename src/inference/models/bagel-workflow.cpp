@@ -1,5 +1,6 @@
 #include "inference/model-workflow.h"
 #include "inference/profile-context.h"
+#include "bagel-rules.h"
 
 #include "adapters/diffusion-adapter.h"
 #include "adapters/llama-cpp-adapter.h"
@@ -75,16 +76,12 @@ std::string bagel_reasoning_prompt(bool generate_image) {
            "The reasoning process is enclosed within <think> </think> tags, i.e. <think> reasoning process here </think> answer here<|im_end|>";
 }
 
-void append_vision_image(workflow_context & context, const image_input & image) {
-    auto & vision = context.vision();
+void append_vision_image(workflow_context & context, const std::vector<float> & embeddings) {
     auto & engine = context.language_model;
-    const auto start = metrics_clock::now();
     const auto before = engine.tokens().size();
-    engine.append_bagel_image_embeddings(vision.encode(image));
-    if (auto * metrics = context.metrics) {
-        metrics->vision_encode_ms = std::max(0.0, metrics->vision_encode_ms) + metrics_elapsed_ms(start);
+    engine.append_bagel_image_embeddings(embeddings, context.metrics);
+    if (auto * metrics = context.metrics)
         metrics->vision_tokens += engine.tokens().size() - before;
-    }
 }
 
 class bagel_workflow final : public model_workflow {
@@ -108,11 +105,25 @@ public:
             throw std::invalid_argument("max_tokens must be positive");
         }
         auto & engine = context.language_model;
+        const auto reasoning = think ? engine.tokenize(bagel_reasoning_prompt(false)) : std::vector<llama_token>{};
+        const auto question = engine.tokenize(text_prompt(prompt));
+        const auto text_budget = reasoning.size() + question.size() + size_t(max_tokens);
+        const auto capacity = engine.context_capacity();
+        if (text_budget >= capacity) {
+            throw std::invalid_argument("BAGEL prompt and output budget need " + std::to_string(text_budget) +
+                                        " tokens; context has " + std::to_string(capacity) + " including the image");
+        }
+        const auto image_group_limit = std::min(capacity - text_budget, engine.microbatch_capacity());
+        if (image_group_limit <= bagel_rules::vision_boundary_tokens) {
+            throw std::invalid_argument("BAGEL context or microbatch has no room for the image and its boundary tokens");
+        }
+
         engine.reset();
-        if (think)
-            engine.append(engine.tokenize(bagel_reasoning_prompt(false)));
-        append_vision_image(context, image);
-        engine.append(engine.tokenize("<|im_start|>" + prompt + "<|im_end|><|im_start|>"));
+        const auto embeddings =
+            context.vision().encode(image, context.metrics, image_group_limit - bagel_rules::vision_boundary_tokens);
+        engine.append(reasoning, true, context.metrics);
+        append_vision_image(context, embeddings);
+        engine.append(question, true, context.metrics);
         begin_text_decode(context);
         auto answer = decode_bagel_answer(context, max_tokens, think);
         finish_text_decode(context);
@@ -139,7 +150,7 @@ public:
             context.transfer_prefix(conditioning_slot::conditional);
             engine.import_prefix(
                 diffusion.append_image_to_prefix(conditioning_slot::conditional, *input, options.seed));
-            append_vision_image(context, *input);
+            append_vision_image(context, context.vision().encode(*input, context.metrics));
             if (options.guidance > 1) {
                 context.transfer_prefix(conditioning_slot::without_text);
             }

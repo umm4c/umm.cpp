@@ -102,10 +102,7 @@ bagel_vision_encoder & session::impl::vision() {
         throw std::runtime_error("Image understanding requires a model package with vision weights");
     }
     if (!vision_encoder) {
-        const auto load_start = metrics_clock::now();
         vision_encoder = std::make_unique<bagel_vision_encoder>(vision_model, vision_backend);
-        if (active_metrics)
-            active_metrics->vision_model_load_ms = metrics_elapsed_ms(load_start);
     }
     return *vision_encoder;
 }

@@ -17,12 +17,13 @@ namespace umm {
 using llama_prefill_detail::hash_prefill_input;
 using llama_prefill_detail::record_prefill;
 
-void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> & embeddings) {
+void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> & embeddings,
+                                                       request_metrics * metrics) {
     const int dim = llama_model_n_embd(model_.get());
     if (family_ != model_family::bagel || embeddings.empty() || embeddings.size() % dim) {
         throw std::invalid_argument("Expected BAGEL vision embeddings");
     }
-    const size_t n = embeddings.size() / dim + 2;
+    const size_t n = embeddings.size() / dim + bagel_rules::vision_boundary_tokens;
     if (n > llama_n_ubatch(context_.get()) || tokens_.size() + n > llama_n_ctx(context_.get())) {
         throw std::runtime_error("Image group exceeds the understanding context or batch capacity");
     }
@@ -33,9 +34,9 @@ void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> &
     const auto row_bytes = ggml_row_size(table->type, dim);
     std::vector<uint8_t> row(row_bytes);
     const auto boundary = tokenize(bagel_rules::vision_boundaries);
-    if (boundary.size() != 2)
+    if (boundary.size() != bagel_rules::vision_boundary_tokens)
         throw std::runtime_error("Missing BAGEL image boundary tokens");
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < bagel_rules::vision_boundary_tokens; ++i) {
         ggml_backend_tensor_get(table, row.data(), boundary[i] * row_bytes, row_bytes);
         float * dest = input.data() + (i ? n - 1 : 0) * dim;
         if (table->type == GGML_TYPE_F32)
@@ -57,6 +58,9 @@ void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> &
     batch.pos = positions.data();
     batch.n_seq_id = seq_counts.data();
     batch.seq_id = seq_ids.data();
+    if (metrics)
+        synchronize();
+    const auto start = metrics_clock::now();
     batch.logits = outputs.data();
     llama_set_causal_attn(context_.get(), false);
     const int status = decode_profiled(batch, "understanding_prefill");
@@ -67,6 +71,14 @@ void llama_cpp_adapter::append_bagel_image_embeddings(const std::vector<float> &
     tokens_.resize(offset + n, LLAMA_TOKEN_NULL);
     tokens_[offset] = boundary.front();
     tokens_.back() = boundary.back();
+    if (metrics) {
+        synchronize();
+        record_prefill(metrics, "image", offset, n, outputs.back(), metrics_elapsed_ms(start));
+        batch.token = tokens_.data() + offset;
+        // BAGEL uses one position axis. Hash the other three as zeros.
+        hash_prefill_input(metrics, batch, 1);
+        metrics->attention_mode_switches += 2;
+    }
     positions_.insert(positions_.end(), n, next_position_);
     next_position_ += bagel_rules::image_position_count;
     has_logits_ = true;

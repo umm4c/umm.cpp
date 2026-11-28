@@ -39,7 +39,7 @@ public:
     std::vector<ggml_tensor *> weights() const;
     void append(const std::vector<llama_token> & tokens, bool need_logits = true, request_metrics * metrics = nullptr);
     // BAGEL supplies a flat sequence of vision embeddings.
-    void append_bagel_image_embeddings(const std::vector<float> & embeddings);
+    void append_bagel_image_embeddings(const std::vector<float> & embeddings, request_metrics * metrics);
     // SenseNova U1 supplies spatial embeddings with a 2-D image grid.
     void append_u1_image_embeddings(const std::vector<float> & embeddings, int grid_width, int grid_height,
                                     bool need_logits = true, request_metrics * metrics = nullptr);
@@ -64,6 +64,7 @@ public:
     const std::vector<llama_token> & tokens() const { return tokens_; }
     const std::vector<llama_pos> & positions() const { return positions_; }
     size_t context_capacity() const { return llama_n_ctx(context_.get()); }
+    size_t microbatch_capacity() const { return llama_n_ubatch(context_.get()); }
 
 private:
     int decode_profiled(llama_batch batch, const char * phase);
