@@ -192,6 +192,7 @@ result profile(const request & input, bool operator_timing) {
                 throw std::invalid_argument("RPC profiling requires a single-card CANN0 worker");
             env.set("GGML_RPC_NO_RDMA", "1");
             backend = register_remote_cann(d.endpoint);
+            env.set("GGML_RPC_CANN_DEVICE", backend);
         } else {
             ggml_backend_load_all();
             auto dev = ggml_backend_dev_by_name(backend.c_str());
