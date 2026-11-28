@@ -223,6 +223,9 @@ result profile(const request & input, bool operator_timing) {
                                                    : max_images > 4 ? "1152"
                                                                     : "4096"},
                                     {"--cann-q8-nz", d.transport == "local" ? "1" : "0"}};
+        if (c.remote) {
+            options.emplace("--rpc-endpoint", d.endpoint);
+        }
         const auto init = clock::now();
         session engine(model.string(), "", backend, backend, backend + "=40", backend, std::stoi(options["--n-ctx"]),
                        std::stoi(options["--n-batch"]), std::stoi(options["--n-ubatch"]));
