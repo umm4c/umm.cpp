@@ -29,13 +29,15 @@ public:
     explicit llama_cpp_adapter(const std::string & model_path, int context_size = 0, int gpu_layers = 99,
                                bool full_precision = false, const std::string & backend = "", int batch_size = 0,
                                int microbatch_size = 0, const std::string & secondary_backend = "");
+    ~llama_cpp_adapter();
     std::vector<llama_token> tokenize(const std::string & text) const;
     std::string piece(llama_token token) const;
     bool is_end(llama_token token) const;
     void reset();
     void synchronize();
     ggml_backend_sched_t scheduler() const;
-    void set_placement(graph_placement placement);
+    void set_placement(graph_placement placement, std::function<bool()> recover = {},
+                       std::function<bool(const char *, int64_t, int64_t)> replan = {});
     std::vector<ggml_tensor *> weights() const;
     void append(const std::vector<llama_token> & tokens, bool need_logits = true, request_metrics * metrics = nullptr);
     // BAGEL supplies a flat sequence of vision embeddings.
@@ -66,11 +68,14 @@ public:
     size_t context_capacity() const { return llama_n_ctx(context_.get()); }
 
 private:
+    void invalidate_placement();
     int decode_profiled(llama_batch batch, const char * phase);
     std::vector<float> token_embeddings(const std::vector<llama_token> & tokens);
     std::string architecture_;
     model_family family_ = model_family::unknown;
     graph_placement placement_;
+    std::function<bool()> placement_recover_;
+    std::function<bool(const char *, int64_t, int64_t)> placement_replan_;
     std::exception_ptr placement_error_;
     llama_model_kv_override overrides_[2]{};
     std::unique_ptr<llama_model, decltype(&llama_model_free)> model_{nullptr, llama_model_free};

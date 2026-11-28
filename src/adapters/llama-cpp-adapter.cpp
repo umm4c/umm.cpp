@@ -4,10 +4,12 @@
 #include "scheduling/backend-devices.h"
 
 #include "llama-context.h"
+#include "llama-memory.h"
 #include "llama-model.h"
 #include "ggml-backend.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -92,6 +94,13 @@ llama_cpp_adapter::llama_cpp_adapter(const std::string & model_path, int context
     }
 }
 
+llama_cpp_adapter::~llama_cpp_adapter() {
+    if (placement_) {
+        synchronize();
+        set_placement({});
+    }
+}
+
 // Token and text decoding ---------------------------------------------------
 
 std::vector<llama_token> llama_cpp_adapter::tokenize(const std::string & text) const {
@@ -147,7 +156,10 @@ ggml_backend_sched_t llama_cpp_adapter::scheduler() const {
     return context_->get_sched();
 }
 
-void llama_cpp_adapter::set_placement(graph_placement placement) {
+void llama_cpp_adapter::set_placement(graph_placement placement, std::function<bool()> recover,
+                                      std::function<bool(const char *, int64_t, int64_t)> replan) {
+    placement_recover_ = std::move(recover);
+    placement_replan_ = std::move(replan);
     placement_ = std::move(placement);
     if (!placement_) {
         ggml_backend_sched_set_placement_callback(scheduler(), nullptr, nullptr);
@@ -168,11 +180,35 @@ void llama_cpp_adapter::set_placement(graph_placement placement) {
         this);
 }
 
+void llama_cpp_adapter::invalidate_placement() {
+    synchronize();
+    auto full_memory = context_->get_memory()->init_full();
+    // This existing llama.cpp reserve entry invalidates the previous graph
+    // result and scheduler state together without committing any KV writes.
+    if (!full_memory || !context_->graph_reserve(1, 1, 1, full_memory.get(), true)) {
+        throw std::runtime_error("Could not invalidate the cached understanding graph");
+    }
+}
+
 int llama_cpp_adapter::decode_profiled(llama_batch batch, const char * phase) {
     profiling::phase_scope scope(
         std::string(profiling::current_phase.phase) == "understanding_decode" ? "understanding_decode" : phase,
-        batch.n_tokens, tokens_.size());
-    const int status = llama_decode(context_.get(), batch);
+        batch.n_tokens, tokens_.size(), uint32_t(batch.n_tokens) <= llama_n_ubatch(context_.get()));
+    const auto & input = profiling::current_phase;
+    if (placement_replan_ && placement_replan_(input.phase, input.tokens, input.cached_tokens)) {
+        const auto start = std::chrono::steady_clock::now();
+        invalidate_placement();
+        profiling::current_phase.rebuild_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    }
+    int status = llama_decode(context_.get(), batch);
+    // On allocation failure llama_decode rolls back this microbatch. Recover
+    // only a single-microbatch decode, before any part of it has executed.
+    if (status == -2 && profiling::current_phase.single_ubatch && placement_recover_ && placement_recover_()) {
+        placement_error_ = {};
+        invalidate_placement();
+        status = llama_decode(context_.get(), batch);
+    }
     if (placement_error_) {
         std::rethrow_exception(std::exchange(placement_error_, {}));
     }

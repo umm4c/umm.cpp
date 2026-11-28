@@ -1,8 +1,10 @@
 #include "policies/policy.h"
+#include "policies/adaptive.h"
 #include "policies/random-plan.h"
 #include "ggml-backend.h"
 
 #include <stdexcept>
+#include <algorithm>
 
 namespace umm {
 
@@ -60,14 +62,21 @@ execution_configuration configure_execution_policy(execution_options & options) 
     static const local_310p_policy local;
     static const remote_910b_policy remote;
     static const random_policy random;
+    static const adaptive_policy adaptive;
     static const std::map<std::string, const execution_policy *> policies = {
         {"local_310p", &local},
         {"remote_910b", &remote},
         {"random", &random},
+        {"adaptive", &adaptive},
     };
     const auto name = policy_options::get(options, "--execution-policy");
     if (name != "random" && (options.count("--policy-seed") || options.count("--policy-cuts"))) {
         throw std::invalid_argument("--policy-seed and --policy-cuts require --execution-policy random");
+    }
+    if (name != "adaptive" && std::any_of(options.begin(), options.end(), [](const auto & x) {
+        return x.first.rfind("--planner-", 0) == 0;
+    })) {
+        throw std::invalid_argument("Planner options require --execution-policy adaptive");
     }
     if (name.empty()) {
         if (options.count("--rpc-endpoint") || options.count("--local-device")) {
@@ -77,7 +86,7 @@ execution_configuration configure_execution_policy(execution_options & options) 
     }
     const auto policy = policies.find(name);
     if (policy == policies.end()) {
-        throw std::invalid_argument("execution-policy must be local_310p, remote_910b or random");
+        throw std::invalid_argument("execution-policy must be local_310p, remote_910b, random or adaptive");
     }
     return policy->second->apply(options);
 }

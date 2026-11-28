@@ -23,3 +23,7 @@ if(UMM_BUILD_BACKEND_SMOKE)
     target_include_directories(umm-random-plan-smoke PRIVATE "${PROJECT_SOURCE_DIR}/src")
     target_link_libraries(umm-random-plan-smoke PRIVATE umm-scheduling ggml)
 endif()
+
+add_executable(umm-runtime-placement-test EXCLUDE_FROM_ALL scheduling/runtime-placement.cpp)
+target_include_directories(umm-runtime-placement-test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(umm-runtime-placement-test PRIVATE umm-scheduling)

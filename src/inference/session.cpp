@@ -82,7 +82,12 @@ session::impl::impl(model_package package_, const std::string & understanding_ba
     if (!package.supports(language_model.family(), model_capability::text)) {
         throw std::runtime_error("Model package is missing its understanding component");
     }
-    language_model.set_placement(schedule.place);
+    if (schedule.prepare) {
+        auto prepared = schedule.prepare(language_model.scheduler(), language_model.weights(), package.component("understanding"));
+        language_model.set_placement(std::move(prepared.place), std::move(prepared.recover), std::move(prepared.replan));
+    } else {
+        language_model.set_placement(schedule.place);
+    }
 }
 
 // Image and diffusion plumbing ---------------------------------------------

@@ -14,6 +14,12 @@ options parse_options(int argc, char ** argv) {
     }
     static const std::map<std::string, bool> allowed = {
         {"--execution-policy", true},
+        {"--planner-profile", true},
+        {"--planner-calibration", true},
+        {"--planner-algorithm", true},
+        {"--planner-mode", true},
+        {"--planner-budget-ms", true},
+        {"--planner-log", true},
         {"--rpc-endpoint", true},
         {"--local-device", true},
         {"--policy-seed", true},

@@ -66,12 +66,37 @@ build-rpc-client/bin/umm-cli --model /path/to/u1.5-v2 --mode text \
 | `--input`、`--output` | 理解和编辑使用输入图像。生图和编辑使用输出文件，图文交错生成使用输出文件名前缀 |
 | `--max-tokens`、`--max-images` | 文本 token 上限、图文交错生成的图片上限 |
 | `--width`、`--height`、`--steps`、`--cfg`、`--shift`、`--seed` | 生成尺寸、步数、引导强度、采样偏移和种子 |
-| `--execution-policy` | `local_310p` 固定使用本地 310P，`remote_910b` 固定使用远端 910B，`random` 在两端切分理解图，视觉编码和扩散在本地执行 |
-| `--local-device`、`--rpc-endpoint` | 本地设备名（默认 `CANN0`）和远端 `HOST:PORT`。远端和随机策略需要 RPC 地址 |
+| `--execution-policy` | `local_310p` 固定使用本地 310P，`remote_910b` 固定使用远端 910B，`random` 随机切分理解图，`adaptive` 按实测图和链路成本选择理解图放置。后两种策略的视觉编码和扩散在本地执行 |
+| `--local-device`、`--rpc-endpoint` | 本地设备名（默认 `CANN0`）和远端 `HOST:PORT`。远端、随机和自适应策略需要 RPC 地址 |
 | `--policy-seed`、`--policy-cuts` | 随机策略的放置种子和每张理解图的切分点数，默认分别为 `0` 和 `1` |
 | `--n-ctx`、`--n-batch`、`--n-ubatch` | 上下文、批次和微批次的 token 容量 |
 
 完整参数见 `build/bin/umm-cli --help`。
+
+### 自适应理解图放置
+
+`umm-cli`、`umm-session` 和 `umm-server` 接受同一组参数。以下命令用双端 Profiler 数据对即将分配的理解图评分，并继续在 310P 上执行。
+
+```bash
+build/bin/umm-cli --model /model --mode text --prompt "介绍一下杭州" \
+  --execution-policy adaptive --local-device CANN0 --rpc-endpoint 127.0.0.1:50437 \
+  --n-ctx 8192 --n-batch 4096 --n-ubatch 4096 \
+  --planner-profile /profile --planner-log /output/placement.jsonl \
+  --planner-algorithm min-cut --planner-mode observe --planner-budget-ms 30
+```
+
+`--planner-profile` 指向含 `manifest.json`、`graphs.jsonl`、`hierarchy.jsonl` 和 `timings.jsonl` 的双端实测目录。以采集所用的 token 配置为准。算法可设为 `local-search`（默认）、`min-cut` 或 `beam-search`。观察模式可以提供校准表用于对照。有实测计算覆盖而没有校准表时，日志中的 `compute_only_upper_bound` 表示计算节省给搬运与准备留下的时间上限。
+
+使用 `--planner-mode apply --planner-calibration FILE` 开启执行。运行时核验模型 SHA-256、GGML 构建、设备、RPC 地址和 CANN 权重布局。校准文件为 JSON，包含以下字段。
+
+| 字段 | 含义 |
+| --- | --- |
+| `schema_version`, `data_origin` | `umm-runtime-placement-calibration/v1` 和 `measured` |
+| `endpoint`, `local_device`, `profile_manifest_sha256` | 当前 RPC 地址、本地设备名和该 Profiler 的 `manifest.json` SHA-256 |
+| `switch_ms`, `margin_ms` | 预计的一次切换开销和配对测量的收益门槛 |
+| `local`, `remote` | 各端的 `submission_ms`、`transfer_base_ms`、`transfer_bytes_per_ms`、`workspace_bytes`、`extra_capacity_bytes`。传输以目的端命名，分别为下载和上传。容量为除已驻留状态之外可用于计算图的预算，应为工作区留出空间。 |
+
+运行时按覆盖区间复评，使用远端已完成的同图测量判断迁移范围。首次遇到分配前无法直接匹配的图时，先在本地分配并用实际生成的复制节点关联 Profiler 记录。后续相同结构且有相应输入计时的提交可以使用该关联。持久 KV 及其相关写入固定在 310P。远端空闲显存于会话初始化加载权重副本后采样，规划使用该采样值和标定预算，分配后核验实际缓冲增长。日志记录预测成本、规划开销、实际设备和分段，以及 GGML 分配后对预测跨端边界核验得到的搬运字节。候选超时或关键测量缺失时使用 310P。已选混合方案分配或校验失败时，框架可以在尚未执行的单微批内重建本地计划并重试。一次决策默认只比较当前提交，输入及当前放置仍适用时可沿用框架已分配的图。
 
 ### HTTP 服务调用
 

@@ -2,6 +2,7 @@
 
 #include "placement.h"
 
+#include <cstdint>
 #include <map>
 #include <string>
 
@@ -9,9 +10,16 @@ namespace umm {
 
 using execution_options = std::map<std::string, std::string>;
 
+struct prepared_placement {
+    graph_placement place;
+    std::function<bool()> recover;
+    std::function<bool(const char *, int64_t, int64_t)> replan;
+};
+
 struct understanding_schedule {
     std::string secondary_backend;
     graph_placement place;
+    std::function<prepared_placement(ggml_backend_sched_t, const std::vector<ggml_tensor *> &, const std::string &)> prepare;
 };
 
 struct execution_configuration {

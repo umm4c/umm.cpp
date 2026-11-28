@@ -90,6 +90,7 @@ add_custom_target(umm-build-identity
     BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/build-identity.h"
     VERBATIM)
 add_dependencies(umm-runtime umm-build-identity)
+add_dependencies(umm-scheduling umm-build-identity)
 target_include_directories(umm-session PRIVATE src
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"
