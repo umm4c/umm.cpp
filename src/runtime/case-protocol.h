@@ -12,6 +12,9 @@ namespace umm::runtime {
 using json = nlohmann::json;
 
 inline const json & required_field(const json & object, const char * key) {
+    if (!object.is_object()) {
+        throw std::invalid_argument("Expected a JSON object");
+    }
     const auto field = object.find(key);
     if (field == object.end()) {
         throw std::invalid_argument(std::string("Missing field: ") + key);
@@ -23,7 +26,7 @@ template <typename T> T required(const json & object, const char * key) {
     const auto & field = required_field(object, key);
     try {
         return field.get<T>();
-    } catch (const json::type_error & error) {
+    } catch (const json::exception & error) {
         throw std::invalid_argument(std::string("Invalid type for field ") + key + ": " + error.what());
     }
 }
