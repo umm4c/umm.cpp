@@ -131,7 +131,7 @@ bool llama_cpp_adapter::is_end(llama_token token) const {
 void llama_cpp_adapter::reset() {
     llama_memory_clear(llama_get_memory(context_.get()), true);
     if (family_ == model_family::bagel) {
-        llama_set_causal_attn(context_.get(), true);
+        set_causal_attention(true);
     }
     placement_error_ = {};
     tokens_.clear();
@@ -156,6 +156,13 @@ void llama_cpp_adapter::set_placement(graph_placement placement) {
     apply_placement_callback();
 }
 
+void llama_cpp_adapter::set_causal_attention(bool enabled) {
+    if (context_->get_cparams().causal_attn != enabled) {
+        llama_set_causal_attn(context_.get(), enabled);
+        rebind_placement_ = true;
+    }
+}
+
 void llama_cpp_adapter::apply_placement_callback() {
     if (!placement_) {
         ggml_backend_sched_set_placement_callback(scheduler(), nullptr, nullptr);
@@ -177,15 +184,16 @@ void llama_cpp_adapter::apply_placement_callback() {
 }
 
 int llama_cpp_adapter::decode_profiled(llama_batch batch, const char * phase) {
+    placement_error_ = {};
+    if (rebind_placement_ && placement_) {
+        // Reserve before decode so the placement callback is installed on the replacement scheduler.
+        context_->sched_reserve();
+        apply_placement_callback();
+        rebind_placement_ = false;
+    }
     profiling::phase_scope scope(
         std::string(profiling::current_phase.phase) == "understanding_decode" ? "understanding_decode" : phase,
         batch.n_tokens, tokens_.size());
-    placement_error_ = {};
-    if (family_ == model_family::bagel && placement_) {
-        // Changing BAGEL's attention mode can recreate the scheduler and drop its placement callback.
-        context_->sched_reserve();
-        apply_placement_callback();
-    }
     const int status = llama_decode(context_.get(), batch);
     if (placement_error_) {
         std::rethrow_exception(std::exchange(placement_error_, {}));
