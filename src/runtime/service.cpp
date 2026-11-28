@@ -219,9 +219,15 @@ struct service::impl {
                         current.source == request_source::http
                             ? current.request.at("case_id")
                             : json("umm-" + std::to_string(getpid()) + "-" + std::to_string(++sequence));
-                    if (current.request.contains("client_case_id"))
-                        value["client_case_id"] = current.request["client_case_id"];
-                    const auto task = current.request.value("task_class", "unknown");
+                    std::string task = "unknown";
+                    if (current.request.is_object()) {
+                        const auto client_id = current.request.find("client_case_id");
+                        if (client_id != current.request.end())
+                            value["client_case_id"] = *client_id;
+                        const auto task_field = current.request.find("task_class");
+                        if (task_field != current.request.end() && task_field->is_string())
+                            task = task_field->get<std::string>();
+                    }
                     const auto known = task == "text_generation" || task == "mixed_understanding" ||
                                        task == "multimodal_prefill" || task == "image_generation";
                     record(value, known ? task : "unknown", current.source);
