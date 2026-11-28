@@ -246,6 +246,7 @@ struct service::impl {
 };
 
 service::service(options args) {
+    (void)parse_generation_options(args, {});
     auto execution = umm::configure_execution_policy(args);
     umm::apply_execution_environment(args, execution);
     const auto enabled = option(args, "--monitoring", "1");

@@ -71,14 +71,7 @@ image_options generation_options(const json & params, const options & args) {
     generation.seed = required<int64_t>(params, "seed");
     if (generation.width <= 0 || generation.height <= 0)
         throw std::invalid_argument("width and height must be positive");
-    generation.steps = std::stoi(option(args, "--steps", "50"));
-    generation.guidance = std::stof(option(args, "--cfg", "4"));
-    generation.image_guidance = std::stof(option(args, "--image-cfg", "1.5"));
-    generation.flow_shift = std::stof(option(args, "--shift", "3"));
-    generation.vae_tiling = option(args, "--vae-tiling", "0") == "1";
-    generation.vae_tile_size = std::stoi(option(args, "--vae-tile-size", "0"));
-    generation.vae_tile_overlap = std::stof(option(args, "--vae-tile-overlap", "0.5"));
-    return generation;
+    return parse_generation_options(args, generation);
 }
 
 image_input decode_data_url(const json & image) {
