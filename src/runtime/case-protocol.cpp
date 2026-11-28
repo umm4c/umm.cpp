@@ -3,6 +3,7 @@
 #include "image-io.h"
 
 #include <cmath>
+#include <limits>
 #include <string_view>
 #include <utility>
 
@@ -64,10 +65,31 @@ json token_counts(const umm::request_metrics & metrics) {
             {"output", available(metrics.output_tokens)}};
 }
 
+int required_int(const json & params, const char * key) {
+    const auto field = params.find(key);
+    if (field == params.end())
+        throw std::invalid_argument(std::string("Missing field: ") + key);
+    if (!field->is_number_integer())
+        throw std::invalid_argument(std::string(key) + " must be an integer");
+
+    // JSON's integer storage is wider than int. Check the original value before casting.
+    using limits = std::numeric_limits<int>;
+    if (field->is_number_unsigned()) {
+        const auto value = field->get<json::number_unsigned_t>();
+        if (value <= static_cast<json::number_unsigned_t>(limits::max()))
+            return static_cast<int>(value);
+    } else {
+        const auto value = field->get<json::number_integer_t>();
+        if (value >= limits::min() && value <= limits::max())
+            return static_cast<int>(value);
+    }
+    throw std::invalid_argument(std::string(key) + " is out of range for int");
+}
+
 image_options generation_options(const json & params, const options & args) {
     image_options generation;
-    generation.width = required<int>(params, "width");
-    generation.height = required<int>(params, "height");
+    generation.width = required_int(params, "width");
+    generation.height = required_int(params, "height");
     generation.seed = required<int64_t>(params, "seed");
     if (generation.width <= 0 || generation.height <= 0)
         throw std::invalid_argument("width and height must be positive");
@@ -146,7 +168,7 @@ json run_protocol_case(session & engine, const json & input, const options & arg
             request.generation = generation_options(params, args);
             format.configure_generation(input, params, request.generation);
         } else {
-            request.max_tokens = required<int>(params, "max_new_tokens");
+            request.max_tokens = required_int(params, "max_new_tokens");
         }
 
         execute_request(engine, request, result);
