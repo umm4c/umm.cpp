@@ -7,13 +7,14 @@
 #include <cstring>
 
 namespace umm::llama_prefill_detail {
-inline void hash_prefill_input(request_metrics * metrics, const llama_batch & batch) {
+inline void hash_prefill_input(request_metrics * metrics, const llama_batch & batch, int position_axes = 4) {
     if (!metrics)
         return;
     for (int i = 0; i < batch.n_tokens; ++i) {
         const int32_t values[] = {batch.token ? batch.token[i] : LLAMA_TOKEN_NULL, batch.pos[i],
-                                  batch.pos[batch.n_tokens + i], batch.pos[2 * batch.n_tokens + i],
-                                  batch.pos[3 * batch.n_tokens + i]};
+                                  position_axes > 1 ? batch.pos[batch.n_tokens + i] : 0,
+                                  position_axes > 2 ? batch.pos[2 * batch.n_tokens + i] : 0,
+                                  position_axes > 3 ? batch.pos[3 * batch.n_tokens + i] : 0};
         for (int32_t value : values) {
             for (unsigned shift = 0; shift < 32; shift += 8) {
                 metrics->prefill_input_hash ^= (uint32_t(value) >> shift) & 255;
