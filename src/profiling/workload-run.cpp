@@ -264,6 +264,9 @@ result profile(const request & input, bool operator_timing) {
                     observer_scope observation(c);
                     response = runtime::run_inline_case(engine, item, options);
                 }
+                // A failed request can leave incomplete timing or graph records.
+                if (response.value("status", "") != "ok")
+                    throw std::runtime_error("Profile request failed: " + response.dump());
                 if (c.remote_timing)
                     batch->finish(out.trace, trace_start, c.device_id, c.samples);
                 const double wall = elapsed(request_start);
@@ -272,8 +275,6 @@ result profile(const request & input, bool operator_timing) {
                     throw std::runtime_error("Execution has fewer graphs than frozen structure");
                 if (!c.error.empty())
                     throw std::runtime_error(c.error);
-                if (response.value("status", "") != "ok")
-                    throw std::runtime_error("Profile request failed: " + response.dump());
                 if (!c.stack.empty())
                     throw std::runtime_error("Unclosed graph observation");
                 if ((c.pass == "timing" || c.pass == "structure") && out.trace.size() == trace_start)
