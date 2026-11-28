@@ -10,4 +10,4 @@ target_include_directories(umm-profiler-api
     PUBLIC "${PROJECT_SOURCE_DIR}/third_party/stable-diffusion.cpp/thirdparty"
     PRIVATE "${PROJECT_SOURCE_DIR}/src"
             "${PROJECT_SOURCE_DIR}/third_party/llama.cpp/vendor/hash/sha256")
-target_link_libraries(umm-profiler-api PRIVATE umm-runtime umm-scheduling ggml vendor::hash)
+target_link_libraries(umm-profiler-api PRIVATE umm-runtime umm-scheduling umm-image-io ggml vendor::hash)

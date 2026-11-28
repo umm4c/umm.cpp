@@ -33,11 +33,14 @@ OUTPUT_DIR="$PWD/outputs/u15-local" \
 
 | 入口 | context / batch / ubatch 默认值 | 覆盖参数 |
 | --- | --- | --- |
-| CLI、JSONL 和 HTTP 的 `local_310p` 策略 | `2048 / 512 / 256` | `--n-ctx`、`--n-batch`、`--n-ubatch` |
+| CLI、JSONL 和 HTTP 的 `local_310p` 策略（U1.5） | `2048 / 1024 / 1024` | `--n-ctx`、`--n-batch`、`--n-ubatch` |
+| CLI、JSONL 和 HTTP 的 `local_310p` 策略（BAGEL） | `2048 / 512 / 256` | `--n-ctx`、`--n-batch`、`--n-ubatch` |
 | `scripts/run-static.sh local_310p` | `8192 / 4096 / 4096` | `N_CTX`、`N_BATCH`、`N_UBATCH` |
 | `scripts/ascend/run-u15.sh` | `2048 / 512 / 256` | `N_CTX`、`N_BATCH`、`N_UBATCH` |
 
-`run-static.sh` 生图默认 1024 × 1024、8 步、CFG 1、shift 3、seed 7，图片写到 `OUTPUT_DIR/image.png`。可通过 `WIDTH`、`HEIGHT`、`STEPS`、`CFG`、`SHIFT`、`SEED` 覆盖。直接调用 CLI 做图像理解时，可参考脚本的较大容量配置。
+`run-static.sh` 生图默认 1024 × 1024、8 步、CFG 1、shift 3、seed 7，图片写到 `OUTPUT_DIR/image.png`。可通过 `WIDTH`、`HEIGHT`、`STEPS`、`CFG`、`SHIFT`、`SEED` 覆盖。
+
+直接使用 `local_310p` 做 U1.5 单图理解时，默认微批次可容纳 1024 × 1024 输入的 1024 个视觉 token。上下文还需容纳提示词和输出。只指定上下文或批次时，未指定的默认批次和微批次会按已有的容量限制缩小。
 
 ### 直接使用容器
 

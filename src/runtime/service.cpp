@@ -1,5 +1,5 @@
 #include "service.h"
-#include "scheduling/execution-policy.h"
+#include "inference/session-config.h"
 #include "identity.h"
 #include <cstdlib>
 #include <atomic>
@@ -252,7 +252,7 @@ struct service::impl {
 };
 
 service::service(options args) {
-    auto execution = umm::configure_execution_policy(args);
+    auto execution = umm::configure_model_execution_policy(args);
     umm::apply_execution_environment(args, execution);
     const auto enabled = option(args, "--monitoring", "1");
     if (enabled != "0" && enabled != "1")

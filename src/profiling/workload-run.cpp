@@ -1,4 +1,5 @@
 #include "profiler.h"
+#include "inference/models/u1-rules.h"
 #include "inference/profile-context.h"
 #include "timing-annotations.h"
 #include "graph-capture.h"
@@ -7,6 +8,7 @@
 #include <memory>
 #include "runtime/case-protocol.h"
 #include "runtime/identity.h"
+#include "runtime/image-io.h"
 #include "scheduling/backend-devices.h"
 #include "inference/model-package.h"
 #include "ggml-backend.h"
@@ -116,6 +118,7 @@ result profile(const request & input, bool operator_timing) {
     json original_cases = json::array();
     std::set<std::string> ids;
     size_t max_images = 0;
+    int max_image_tokens = 0;
     bool generation_only = true;
     while (std::getline(lines, line)) {
         if (line.empty())
@@ -135,10 +138,15 @@ result profile(const request & input, bool operator_timing) {
             if (item.at("type") == "image") {
                 ++images;
                 auto path = std::filesystem::canonical(workload / item.at("path").get<std::string>());
-                const auto bytes = read(path); // PNG/JPEG content is checked by the regular UMM request path.
+                const auto bytes = read(path);
                 const auto digest = hash(bytes);
                 if (item.contains("sha256") && item.at("sha256") != digest)
                     throw std::invalid_argument("Workload image hash mismatch");
+                const auto [width, height] = runtime::image_dimensions(bytes);
+                const auto [prepared_width, prepared_height] = u1_rules::prepared_image_size(width, height);
+                const int image_tokens =
+                    (prepared_width / u1_rules::image_stride) * (prepared_height / u1_rules::image_stride);
+                max_image_tokens = std::max(max_image_tokens, image_tokens);
                 const auto mime = bytes.size() >= 8 && bytes.compare(0, 8, std::string("\x89PNG\r\n\x1a\n", 8)) == 0
                                       ? "image/png"
                                       : "image/jpeg";
@@ -153,6 +161,11 @@ result profile(const request & input, bool operator_timing) {
         throw std::invalid_argument("Workload case count mismatch");
     if (workload_manifest.contains("cases_sha256") && workload_manifest["cases_sha256"] != hash(raw_cases))
         throw std::invalid_argument("Workload cases hash mismatch");
+    const int context_size = generation_only ? 2048 : (max_images > 4 ? 32768 : 8192);
+    // Mixed prefill places each image group in one microbatch, even in a many-image workload.
+    const int prefill_batch = max_images > 4 ? std::max(1152, max_image_tokens) : 4096;
+    const int batch_size = generation_only ? 512 : prefill_batch;
+    const int microbatch_size = generation_only ? 256 : prefill_batch;
     result out;
     out.graphs = json::array();
     out.trace = json::array();
@@ -214,22 +227,16 @@ result profile(const request & input, bool operator_timing) {
                                     {"--steps", fast_lora ? "8" : "50"},
                                     {"--cfg", fast_lora ? "1" : "4"},
                                     {"--shift", "3"},
-                                    {"--n-ctx", generation_only  ? "2048"
-                                                : max_images > 4 ? "32768"
-                                                                 : "8192"},
-                                    {"--n-batch", generation_only  ? "512"
-                                                  : max_images > 4 ? "1152"
-                                                                   : "4096"},
-                                    {"--n-ubatch", generation_only  ? "256"
-                                                   : max_images > 4 ? "1152"
-                                                                    : "4096"},
+                                    {"--n-ctx", std::to_string(context_size)},
+                                    {"--n-batch", std::to_string(batch_size)},
+                                    {"--n-ubatch", std::to_string(microbatch_size)},
                                     {"--cann-q8-nz", d.transport == "local" ? "1" : "0"}};
         if (c.remote) {
             options.emplace("--rpc-endpoint", d.endpoint);
         }
         const auto init = clock::now();
-        session engine(model.string(), "", backend, backend, backend + "=40", backend, std::stoi(options["--n-ctx"]),
-                       std::stoi(options["--n-batch"]), std::stoi(options["--n-ubatch"]));
+        session engine(model.string(), "", backend, backend, backend + "=40", backend, context_size, batch_size,
+                       microbatch_size);
         const auto startup = elapsed(init);
         identities.push_back({{"device_id", d.id},
                               {"resolved_options", options},
