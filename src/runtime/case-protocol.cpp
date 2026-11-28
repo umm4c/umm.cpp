@@ -123,8 +123,8 @@ json run_protocol_case(session & engine, const json & input, const options & arg
     try {
         case_id = required<std::string>(input, "case_id");
         const auto task = required<std::string>(input, "task_class");
-        const auto & content = input.at("content");
-        const auto & params = input.at("params");
+        const auto & content = required_field(input, "content");
+        const auto & params = required_field(input, "params");
         if (!content.is_array() || !params.is_object())
             throw std::invalid_argument("content must be an array and params an object");
 
