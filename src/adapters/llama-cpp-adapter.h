@@ -66,12 +66,15 @@ public:
     size_t context_capacity() const { return llama_n_ctx(context_.get()); }
 
 private:
+    void set_causal_attention(bool enabled);
+    void apply_placement_callback();
     int decode_profiled(llama_batch batch, const char * phase);
     std::vector<float> token_embeddings(const std::vector<llama_token> & tokens);
     std::string architecture_;
     model_family family_ = model_family::unknown;
     graph_placement placement_;
     std::exception_ptr placement_error_;
+    bool rebind_placement_ = false;
     llama_model_kv_override overrides_[2]{};
     std::unique_ptr<llama_model, decltype(&llama_model_free)> model_{nullptr, llama_model_free};
     std::unique_ptr<llama_context, decltype(&llama_free)> context_{nullptr, llama_free};
